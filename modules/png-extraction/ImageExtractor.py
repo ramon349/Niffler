@@ -324,8 +324,6 @@ def execute(pickle_file, dicom_home, output_directory, print_images, print_only_
         core_count = processes
     else:
         core_count = int(os.cpu_count())
-    # get set up to create dataframe
-    dirs = os.listdir(dicom_home)
     # gets all dicom files. if editing this code, get filelist into the format of a list of strings,
     # with each string as the file path to a different dicom file.
     file_path = get_path(depth, dicom_home)

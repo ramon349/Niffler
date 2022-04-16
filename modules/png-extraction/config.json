@@ -1,13 +1,11 @@
 {
-	"DICOMHome": "/opt/data/new-study",
-	"OutputDirectory": "/opt/data/new-study/root",
-	"Depth": 0,
-	"SplitIntoChunks": 1,
+	"DICOMHome": "/mnt/storage/kaggle/xray_data",
+	"OutputDirectory": "/mnt/storage/kaggle/png_data",
+	"SplitIntoChunks": 10,
 	"PrintImages": true,
 	"CommonHeadersOnly": false,
 	"UseProcesses": 0,
-	"FlattenedToLevel": "patient",
 	"is16Bit":true,
 	"SendEmail": true,
-	"YourEmail": "test@test.test"
+	"YourEmail": "rlcorrea@asu.edu"
 }
