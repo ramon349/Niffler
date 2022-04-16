@@ -4,6 +4,8 @@
 	"SplitIntoChunks": 10,
 	"PrintImages": true,
 	"CommonHeadersOnly": false,
+	"PublicHeadersOnly": true,
+	"SpecificHeadersOnly": false,
 	"UseProcesses": 0,
 	"is16Bit":true,
 	"SendEmail": true,
