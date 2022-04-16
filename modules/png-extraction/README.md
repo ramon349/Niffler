@@ -35,6 +35,10 @@ The below two fields can be left unmodified for most executions. The default val
 
 * *CommonHeadersOnly*: Do you want the resulting dataframe csv to contain only the common headers? Finds if less than 10% of the rows are missing this column field. To extract all the headers, default is set as _false_.
 
+* *PublicHeadersOnly*: Do you want the resulting dataframe csv to contain only the public headers? Then set it as _true_(default). For extract all the private headers set as _false_.
+
+*  *SpecificHeadersOnly* : If you want only certain attributes in extracted csv, Then set this value to true and write the required attribute names in featureset.txt. Default value is _false_. Do not delete the featureset.txt even if you don't want this only specific headers
+
 
 ## Running the Niffler PNG Extractor
 ```bash
@@ -71,6 +75,44 @@ In the OutputDirectory, there will be several sub folders and directories.
 ## Running the Niffler PNG Extractor with Slurm
 
 There is also an experimental PNG extractor implementation (ImageExtractorSlurm.py) that provides a distributed execution based on Slurm on a cluster.
+
+
+## Running the Niffler PNG Extractor with Docker
+
+To install docker run:
+
+```bash
+
+    # Install docker
+    $ sudo yum install docker
+    # Start docker service
+    $ sudo systemctl enable docker.service --now
+```
+
+To run do:
+
+
+```bash
+
+# To run with default DICOMHome and OutputDirectory
+$ ./png-extraction-docker -r
+
+# To run with custom DICOMHome and OutputDirectory
+$ ./png-extraction-docker -r [DICOMHome] [OutputDirectory]
+
+```
+Edit the python command to be executed in png-extraction-docker script file.  
+For example, to run Niffler with Slurm change :
+
+    cmd="python3 ImageExtractor.py"
+by
+
+    cmd="python3 ImageExtractorSlurm.py"
+
+**Note:** 
+-   Do not set DICOMHome and OutputDirectory in config.json, supply them to script in format available.
+
+-   To configure other options, change them in config.json  
 
 
 ## Troubleshooting

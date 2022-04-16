@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from asyncio.log import logger
 import os
 import glob 
 from shutil import copyfile
@@ -16,11 +17,14 @@ import argparse
 import numpy as np
 import pandas as pd
 import pydicom as dicom 
+from itertools import repeat
 import png
 # pydicom imports needed to handle data errors
 from pydicom import config
 from pydicom import datadict
 from pydicom import values 
+from HITI_anon_internal.Anon import EmoryAnon
+from HITI_anon_internal.DICOMAnonymization import DICOMAnon
 np.seterr(invalid='ignore')
 
 import pathlib
@@ -37,6 +41,16 @@ def initialize_config_and_execute(config_values):
     p2 = pathlib.PurePath(configs['OutputDirectory'])
     output_directory = p2.as_posix()
 
+    p3 = pathlib.PurePath(configs['MasterKeyDirectory'])
+    mk_directory = p3.as_posix()
+
+    p4 = pathlib.PurePath(configs['WhitelistPath'])
+    whitelist_path = p4.as_posix()
+
+    p5 = pathlib.PurePath(configs['DICOMTagDictPath'])
+    dicomtagdict_path = p5.as_posix()
+
+
     print_images = bool(configs['PrintImages'])
     print_only_common_headers = bool(configs['CommonHeadersOnly'])
     PublicHeadersOnly = bool(configs['PublicHeadersOnly'])
@@ -48,6 +62,8 @@ def initialize_config_and_execute(config_values):
     send_email = bool(configs['SendEmail'])
     no_splits = int(configs['SplitIntoChunks'])
     is16Bit = bool(configs['is16Bit']) 
+    anonymize_metadata = bool(configs['AnonymizeMetadata'])
+    anonymize_dicoms = bool(configs['AnonymizeDICOMs'])
     
     metadata_col_freq_threshold = 0.1
 
@@ -55,6 +71,7 @@ def initialize_config_and_execute(config_values):
     failed = output_directory + '/failed-dicom/'
     maps_directory = output_directory + '/maps/'
     meta_directory = output_directory + '/meta/'
+    anon_dicom_dir = output_directory + '/anon-dicoms/'
 
     LOG_FILENAME = output_directory + '/ImageExtractor.out'
     pickle_file = output_directory + '/ImageExtractor.pickle'
@@ -69,6 +86,9 @@ def initialize_config_and_execute(config_values):
 
     if not os.path.exists(maps_directory):
         os.makedirs(maps_directory)
+
+    if anonymize_dicoms and not os.path.exists(anon_dicom_dir):
+        os.makedirs(anon_dicom_dir)
 
     if not os.path.exists(meta_directory):
         os.makedirs(meta_directory)
@@ -94,10 +114,15 @@ def initialize_config_and_execute(config_values):
     if not os.path.exists(failed + "/5"):
         os.makedirs(failed + "/5")
 
+    EAnon = None
+    if anonymize_dicoms or anonymize_metadata:
+        EAnon = EmoryAnon(mk_directory, whitelist_path, dicomtagdict_path)
+
+
     logging.info("------- Values Initialization DONE -------")
     final_res = execute(pickle_file, dicom_home, output_directory, print_images, print_only_common_headers, depth,
                         processes, flattened_to_level, email, send_email, no_splits, is16Bit, png_destination,
-        failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,SpecificHeadersOnly,PublicHeadersOnly)
+        failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,SpecificHeadersOnly,PublicHeadersOnly, anonymize_dicoms, anonymize_metadata, EAnon, anon_dicom_dir)
     return final_res
 
 
@@ -157,10 +182,13 @@ def unpack_args(func):
     return wrapper
 
 @unpack_args
-def extract_headers(f_list_elem, output_directory):
-    nn,ff,PublicHeadersOnly = f_list_elem # unpack enumerated list
+def extract_headers(f_list_elem, output_directory, DAnon):
+    nn,ff,PublicHeadersOnly, anonymize_dicom = f_list_elem # unpack enumerated list
     plan = dicom.dcmread(ff, force=True)  # reads in dicom file
     # checks if this file has an image
+
+    #anonymize dicom before the extraction process finishes
+   
     c=True
     try:
         check = plan.pixel_array # throws error if dicom file has no image
@@ -170,15 +198,28 @@ def extract_headers(f_list_elem, output_directory):
     # dicom images should not have more than 300 dicom tags
     if len(kv)>300:
         logging.debug(str(len(kv)) + " dicom tags produced by " + ff)
-        copyfile(ff, output_directory+'/failed-dicom/5/'+ '/'.join(ff.split()[-3:]))
+        copyfile(ff, output_directory+'/failed-dicom/5/'+ '/'.join(ff.split("/")[(DAnon.folder_depth-1):]))
     else:
         kv.append(('file', f_list_elem[1])) # adds my custom field with the original filepath
         kv.append(('has_pix_array',c))   # adds my custom field with if file has image
+        
+        #only anonymize if less than 300 tags
+        if anonymize_dicom:
+            try:
+                DAnon.run(plan,  './dicom_anon.out')
+            except Exception as e:
+                logging.warning('DICOM anonymization failed on file {}'.format(ff))
+                logging.error(e)
+
     if c:
         # adds my custom category field - useful if classifying images before processing
         kv.append(('category','uncategorized'))
     else:
         kv.append(('category','no image'))      # adds my custom category field, makes note as imageless
+
+    
+
+            
     return dict(kv)
 
 
@@ -336,7 +377,7 @@ def fix_mismatch(with_VRs=['PN', 'DS', 'IS', 'LO', 'OB']):
 
 def execute(pickle_file, dicom_home, output_directory, print_images, print_only_common_headers, depth,
             processes, flattened_to_level, email, send_email, no_splits, is16Bit, png_destination,
-    failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,SpecificHeadersOnly,PublicHeadersOnly):
+    failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,SpecificHeadersOnly,PublicHeadersOnly, anonymize_dicom, anonymize_metadata, EAnon, anon_dicom_dir):
     err = None
     fix_mismatch()
     if processes == 0.5:  # use half the cores to avoid  high ram usage
@@ -352,6 +393,16 @@ def execute(pickle_file, dicom_home, output_directory, print_images, print_only_
     # gets all dicom files. if editing this code, get filelist into the format of a list of strings,
     # with each string as the file path to a different dicom file.
     file_path = get_path(depth, dicom_home)
+
+    DAnon = None
+    if anonymize_dicom:
+        ignoreDesc = []
+        ignore =  open("ignoreDesc.txt").read().splitlines()
+        for desc in ignore:
+            ignoreDesc.append(desc)
+
+        DAnon = DICOMAnon(EAnon, depth, anon_dicom_dir, ignoreDesc)
+
 
     if os.path.isfile(pickle_file):
         f=open(pickle_file,'rb')
@@ -397,8 +448,8 @@ def execute(pickle_file, dicom_home, output_directory, print_images, print_only_
 
         with Pool(core_count) as p:
             # we send here print_only_public_headers bool value
-            chunks_list=[tups + (PublicHeadersOnly,) for tups in enumerate(chunk)]
-            res = p.imap_unordered(extract_headers, zip(chunks_list, output_directory))
+            chunks_list=[tups + (PublicHeadersOnly,anonymize_dicom,) for tups in enumerate(chunk)]
+            res = p.imap_unordered(extract_headers, zip(chunks_list, repeat(output_directory), repeat(DAnon)))
             for i,e in enumerate(res):
                 headerlist.append(e)
         data = pd.DataFrame(headerlist)
@@ -494,6 +545,16 @@ def execute(pickle_file, dicom_home, output_directory, print_images, print_only_
         merged_maps = merged_maps[common_fields]
     merged_maps.to_csv('{}/mapping.csv'.format(output_directory),index=False)
 
+
+    if anonymize_metadata:
+        try:
+            logging.log("Starting metadata anonymization")
+            EAnon.anon_tabular('{}/metadata.csv'.format(output_directory), output_directory, 100000)
+        except Exception as e:
+            logging.warning('metadata anonymization failed')
+            logging.error(e)
+
+
     if send_email:
        subprocess.call('echo "Niffler has successfully completed the png conversion" | mail -s "The image conversion'
                        ' has been complete" {0}'.format(email), shell=True)
@@ -515,9 +576,14 @@ if __name__ == "__main__":
 
     ap.add_argument("--DICOMHome", default=niffler['DICOMHome'])
     ap.add_argument("--OutputDirectory", default=niffler['OutputDirectory'])
+    ap.add_argument("--MasterKeyDirectory", default=niffler['MasterKeyDirectory'])
+    ap.add_argument("--WhitelistPath", default=niffler['WhitelistPath'])
+    ap.add_argument("--DICOMTagDictPath", default=niffler['DICOMTagDictPath'])
     ap.add_argument("--Depth", default=niffler['Depth'])
     ap.add_argument("--SplitIntoChunks", default=niffler['SplitIntoChunks'])
     ap.add_argument("--PrintImages", default=niffler['PrintImages'])
+    ap.add_argument("--AnonymizeMetadata", default=niffler['AnonymizeMetadata'])
+    ap.add_argument("--AnonymizeDICOMs", default=niffler['AnonymizeDICOMs'])
     ap.add_argument("--CommonHeadersOnly", default=niffler['CommonHeadersOnly'])
     ap.add_argument("--PublicHeadersOnly", default=niffler['PublicHeadersOnly'])
     ap.add_argument("--SpecificHeadersOnly", default=niffler['SpecificHeadersOnly'])
