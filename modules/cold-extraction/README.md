@@ -26,7 +26,7 @@ system.json entries are to be set *only once* for the Niffler deployment by the 
 * *DestAet*:   Set the correct AET of the detination AET. Must match the AET of the storescp.
 
 * *NightlyOnly*: This is set to _true_ by default. Setting it to _false_ will make Niffler on-demand extraction run at any time.
-	
+
 * *StartHour*: When a night-only mode is enabled, when should the extraction start. A rough 24 hour time (hours only), calculated by the hour. Not an exact time.
 
 * *EndHour*: When should the extraction end, when the night-mode is enabled. By default, the start hour is 19 and end hour is 7.
@@ -67,16 +67,22 @@ AAAAA,BBBBBYYBBBBB
 AAAAA,BBBBBYYBBBBB
 AAAAA,BBBBBYYBBBBB
 
-* Make sure the accession's year is in the YY format.
+* Make sure the accession's year is in the YY format while the *LongAccession* flag is set to *false* and the year can be in YYYY format while the *LongAccession* flag is set to *true*.
 
 [3]
 PatientID,AccessionNumber,StudyDate
-AAAAA,BBBBBYYBBBBB,CCCCCC
-AAAAA,BBBBBYYBBBBB,CCCCCC 
-AAAAA,BBBBBYYBBBBB,CCCCCC
+AAAAA,BBBBBYYBBBBB,YYYYMMDD
+AAAAA,BBBBBYYBBBBB,YYYYMMDD
+AAAAA,BBBBBYYBBBBB,YYYYMMDD
 
 
-```
+[4]
+PatientID,AccessionNumber,StudyMonth
+AAAAA,BBBBBYYBBBBB,YYYYMM
+AAAAA,BBBBBYYBBBBB,YYYYMM
+AAAAA,BBBBBYYBBBBB,YYYYMM
+
+``` 
 
 ## Configuring Extraction Profile with config.json.
 
@@ -100,6 +106,7 @@ Example: `python3 ./ColdDataRetriever.py --NumberOfQueryAttributes 1 --FirstAttr
 **Please note:** It is important to use the correct DICOM keywords such as, "PatientID", "AccessionNumber", "StudyInstanceUID", and "StudyDate".
   Please refer to the DICOM Standard for more information on the DICOM header attributes/keywords.
   Please note, the correct keyword is "AccessionNumber" and not "Accession" or "Accessions". Similarly, it is "PatientID" - neither "EMPI" nor "Patient-ID" (although they all are indeed the same in practice).
+  Though "StudyMonth" is a non-DICOM attribute, the current version of Niffler supports "StudyMonth" attribute and works similar to "StudyDate" attribute.
   
 Please refer to the DICOM standards to ensure you spell the [DICOM keyword](http://dicom.nema.org/dicom/2013/output/chtml/part06/chapter_6.html) correctly, if in doubt.
 
@@ -115,7 +122,9 @@ Please refer to the DICOM standards to ensure you spell the [DICOM keyword](http
 
 * *ThirdIndex*: Set the CSV column index of third Attribute. By default, 2. This field is ignored when NumberOfQueryAttributes is 1 or 2.
 
-* *DateFormat*: DateFormat can range from %Y%m%d, %m/%d/%y, %m-%d-%y, %%m%d%y, etc. This field is ignored for extractions that do not use a Date as one of their extraction attributes. We have tested with StudyDate. Leave this entry unmodified for such cases. The default is %Y%m%d and works for most cases.
+* *LongAccession*: Setting this parameter to true allows to handle long accession numbers of format YYYY. The default is false.
+
+* *DateFormat*: DateFormat can range from %Y%m%d, %m/%d/%y, %m-%d-%y, %%m%d%y, etc. This field is ignored for extractions that do not use a Date as one of their extraction attributes. We have tested with StudyDate. Leave this entry unmodified for such cases. The default is %Y%m%d and works for most cases. When using StudyMonth attribute, the default is %Y-%m-%d.
 
 * *SendEmail*: Do you want to send an email notification when the extraction completes? The default is true. You may disable this if you do not want to receive an email upon the completion.
 
@@ -154,14 +163,14 @@ Try again later. Once there is no other process, then you can run your own extra
 
 
 ## Check the Progress
-
+ 
 After some time (may take a few hours to a few days, depending on the length of the CSV file), check whether the extraction is complete.
 ```
 $ tail -f niffler.log
 
 INFO:root:[EXTRACTION COMPLETE] 2020-09-21 17:42:38.465501: Niffler Extraction to /opt/data/new-study Completes. Terminating the completed storescp process.
 ```
-A pickle file tracks the progress. The pickle file is created by appending ".pickle" to the csv file name in the same directory as the csv file. A sample pickle line is as below:
+Apart from the original CSV file, a modified version of the CSV file is created depending on the attributes and a pickle file tracks the progress. The pickle file is created by appending ".pickle" to the modified csv file name in the same directory as the csv file. A sample pickle line is as below:
 
 ```
 <8c>^X1234, 000056789<94>
@@ -201,7 +210,46 @@ To activate, use the below value,
 	"FilePath": "CFIND-DETAILED",
 ```
 
-## Troubleshooting
+# Setting up an Orthanc Server
+
+[Orthanc](https://www.orthanc-server.com/) is an Open-source, lightweight and standalone DICOM Server which enables to convert any machine into a DICOM store (in other words, a mini-PACS system). The Orthanc Framework is supported by all major Operating Systems including Windows, Linux and MacOS.
+
+1. Downloading Orthanc
+- **Windows**: https://www.orthanc-server.com/download.php
+- **Linux**: sudo apt-get install orthanc
+- **MacOS**: https://www.orthanc-server.com/static.php?page=download-mac
+
+2. Locating Configuration file
+- Windows 
+  - Go to "Orthanc Server" folder that was downloaded
+  - Configuration file in named as *Orthanc* in this folder
+- Linux and MacOS
+  - Enter the following command: ```Orthanc --config=Configuration.json ```
+  - Configuration file will be saved with the name *Configuration.json* in the present working directory.
+
+The following steps do not depend on the underlying Operating System.
+
+3. Modify the Configuration file
+- The values of DICOMModalities ("sample" : [ "STORESCP", "127.0.0.1", 2000 ]) should be changed to [AET, IP Address, Port Number]
+  - **AET**: AET is the same as "QueryAET" from system.json in the cold extraction module
+  - **IP Address**: IP Address of the server in which Niffler is running. If Orthanc is being hosted on the local machine, this value can be set to - 127.0.0.1
+  - **Port Number**: Enter any port number (usually 4 digits).
+- The values of RemoteAccessAllowed is to be set to *true*.
+
+4. Uploading DICOM Files
+- Open the Orthanc Server at 127.0.0.1:8042 (if the server is hosted on a server, use the ip address of server instead of 127.0.0.1) in a web browser.
+- Upload the DICOM files. The uploaded files could be verified at *All Studies*.
+
+5. Modify the system.json
+- **SrcAET**: "ORTHANC@IPAddress:4242" (IP Address of the hosting system, 127.0.0.1 if the server is being hosted locally)
+- **QueryAET**: "AET:8080" (AET from point-3. In this case - "niffler")
+- **DestAET**: "AET" (In this case - "niffler")
+
+6. Run and test the server
+- Running the Configuration file through ```./Orthanc Configuration.json``` command will start the Orthanc Server.
+- Modify the config.json as per the above instructions. Create a csv file with the information to be used for extraction and run the cold extraction module in Niffler to test the Orthanc Server.
+  
+# Troubleshooting
 
 If the process fails even when no one else's Niffler process is running, check your log file (UNIQUE-OUTPUT-FILE-FOR-YOUR-EXTRACTION.out)
 
@@ -234,11 +282,38 @@ $ sudo ps -xa | grep storescp
 
 $ sudo kill 241720
 ```
+## Testing your deployment with Niffler C-ECHO Implementation
 
+Sometimes your connection may not succeed due to firewall issues or because the source PACS not recognizing your end as a valid AET. To confirm and rule out these issues, you can issue a C-ECHO command included with Niffler. 
+
+**First, please make sure your system.json is updated with the correct values for "SrcAet" and "QueryAet"**.
+
+Then, run the below.
+
+````
+$ python3 TestConnection.py
+````
+
+The below output indicates the success.
+````
+C-ECHO request status: 0x0000
+````
+
+If you receive any other output such as the below, that indicates the connection was not successful. 
+````
+Association rejected, aborted or never connected
+````
+
+Please check again the "SrcAet" and "QueryAet" in system.json for correctness. 
+
+If everything is correct in your/Niffler end, please consult your enterprise PACS deployment for configuration. Is it configured correctly to accept queries from your "QueryAet"? Is there a firewall? Is that firewall configured to accept queries **from** your QueryAet (host and port)?
+
+
+## Testing your deployment with DCM4CHE
 
 Niffler strives to be stable for at least the latest stable releases. But since it is still an open-source research project by a university research group, it may have bugs at times - which we aim to fix as soon as we spot. But if your extraction fails for some reason, you could rule out whether the issue is really a Niffler bug or whether some other issue such as some problems in the PACS connection. 
 
-Simply start a storescp and movescu clients (in that order) of DCM4CHE from the server where you are attempting to run. If the below commands work, but Niffler still fails (after correctly following the README), it could indicate a Niffler bug.
+Simply start a storescp and movescu clients (in that order) of DCM4CHE from the server where you are attempting to run Niffler. If the below commands work, but Niffler still fails (after correctly following the README), it could indicate a Niffler bug.
 
 The requests take the below format.
 
@@ -267,3 +342,31 @@ nohup /opt/dcm4che-5.22.5/bin/storescp --accept-unknown --directory new-pydicom 
 C-MOVE
 nohup /opt/dcm4che-5.22.5/bin/movescu -c "AE_ARCH2@xx.yy.ww.zz:104" -b "QBNIFFLER:4243" -M PatientRoot -m PatientID=12345678 --dest QBNIFFLER > movescu.out &
 ```
+
+If the testing with DCM4CHE as above does not work, that is an issue likely with your PACS configuration to send DICOM data to your endpoint. Please get the above to work first in that case before attempting the execution with Niffler.
+
+## Using Docker
+
+To use as a docker container, first navigate to this directory (`modules/cold-extraction`) and build the image.
+
+```
+cd modules/cold-extraction
+docker build -t niffler/cold-extraction .
+```
+
+Then, run using the image tag used above.
+
+```
+docker run --network pacs_network --rm niffler/cold-extraction
+```
+
+Replace `pacs_network` with the docker network where the PACS is reachable.
+
+When the configuration or system JSON, as well as the CSV files change, either rebuild the image or mount as a volume before running the container.
+
+For ease, a docker compose file is also included. After configuring the volumes, networks, and everything else on the `docker-compose.yml` file, simply run:
+
+```
+docker compose up
+```
+

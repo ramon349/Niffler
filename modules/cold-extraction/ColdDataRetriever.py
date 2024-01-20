@@ -14,7 +14,12 @@ import threading
 import argparse
 import random
 import string
+import itertools
+import calendar
+import pdb
 
+import pandas as pd
+import numpy as np
 from collections import defaultdict
 
 
@@ -24,7 +29,7 @@ def initialize_config_and_execute(valuesDict):
     """
     global storescp_processes, niffler_processes, nifflerscp_str, niffler_str
     global storage_folder, file_path, csv_file, number_of_query_attributes, first_index, second_index, third_index, \
-        first_attr, second_attr, third_attr, date_format, email, send_email, system_json
+        first_attr, second_attr, third_attr, long_accession, date_format, email, send_email, system_json, mod_csv_file
     global DCM4CHE_BIN, SRC_AET, QUERY_AET, DEST_AET, NIGHTLY_ONLY, START_HOUR, END_HOUR, IS_EXTRACTION_NOT_RUNNING, \
         NIFFLER_ID, MAX_PROCESSES, SEPARATOR, cfind_add, out_folder
     global firsts, seconds, thirds, niffler_log, resume, length, t_start, cfind_only, cfind_detailed, temp_folder
@@ -39,10 +44,13 @@ def initialize_config_and_execute(valuesDict):
     first_attr = valuesDict['FirstAttr']
     second_attr = valuesDict['SecondAttr']
     third_attr = valuesDict['ThirdAttr']
+    long_accession = valuesDict['LongAccession']
     date_format = valuesDict['DateFormat']
     email = valuesDict['YourEmail']
     send_email = bool(valuesDict['SendEmail'])
     system_json = valuesDict['NifflerSystem']
+    mod_csv_file = csv_file[:-4]+'_mod.csv'
+    shutil.copyfile(csv_file, mod_csv_file)
 
     # Reads the system_json file.
     with open(system_json, 'r') as f:
@@ -81,9 +89,9 @@ def initialize_config_and_execute(valuesDict):
         cfind_add = '-r StudyDescription -x description.csv.xsl'
         out_folder = temp_folder
     elif file_path == cfind_detailed:
-        cfind_add = '-r StudyDescription -r StudyDate -r StudyTime -r DeviceSerialNumber -r ProtocolName ' \
-                    '-r PerformedProcedureStepDescription -r NumberOfStudyRelatedSeries -r  ' \
-                    'NumberOfStudyRelatedInstances -r AcquisitionDate ' \
+        cfind_add = '-r StudyDescription -r StudyDate -r StudyTime -r DeviceSerialNumber ' \
+                    '-r ProtocolName -r PerformedProcedureStepDescription -r NumberOfStudyRelatedSeries ' \
+                    '-r NumberOfStudyRelatedInstances -r AcquisitionDate ' \
                     '-x detailed.csv.xsl'
         out_folder = temp_folder
     else:
@@ -104,13 +112,13 @@ def initialize_config_and_execute(valuesDict):
 
     # All extracted files from the csv file are saved in a respective .pickle file.
     try:
-        with open(csv_file + '.pickle', 'rb') as f:
+        with open(mod_csv_file + '.pickle', 'rb') as f:
             extracted_ones = pickle.load(f)
             # Since we have successfully located a pickle file, it indicates that this is a resume.
             resume = True
     except:
         logging.info("No existing pickle file found. Therefore, initialized with empty value to track the progress to "
-                     "{0}.pickle.".format(csv_file))
+                     "{0}.pickle.".format(mod_csv_file))
 
     # record the start time
     t_start = time.time()
@@ -143,41 +151,92 @@ def check_kill_process():
 def initialize():
     """
     Initialize the storescp and Niffler AET.
-    """
-    global niffler_processes
-    global storescp_processes
-    for _ in os.popen("ps ax | grep " + niffler_str + " | grep -v grep"):
-        niffler_processes += 1
-    for _ in os.popen("ps ax | grep -E " + nifflerscp_str + " | grep -v grep"):
-        storescp_processes += 1
+    """                                                                          
+    query_aet = QUERY_AET.split(":")[0]
+    dest_aet = DEST_AET
+    if query_aet == dest_aet:
+        global niffler_processes
+        global storescp_processes
+        for _ in os.popen("ps ax | grep " + niffler_str + " | grep -v grep"):
+            niffler_processes += 1
+        for _ in os.popen("ps ax | grep -E " + nifflerscp_str + " | grep -v grep"):
+            storescp_processes += 1
 
-    logging.info("Number of running Niffler processes: {0} and storescp processes: {1}".format(niffler_processes,
+        logging.info("Number of running Niffler processes: {0} and storescp processes: {1}".format(niffler_processes,
                                                                                                storescp_processes))
 
-    if niffler_processes > MAX_PROCESSES:
-        logging.error("[EXTRACTION FAILURE] {0}: Previous {1} extractions still running. As such, your extraction "
+        if niffler_processes > MAX_PROCESSES:
+            logging.error("[EXTRACTION FAILURE] {0}: Previous {1} extractions still running. As such, your extraction "
                       "attempt was not successful this time. Please wait until those complete and re-run your"
                       " query.".format(datetime.datetime.now(), MAX_PROCESSES))
-        sys.exit(0)
+            sys.exit(0)
 
-    if storescp_processes >= niffler_processes:
-        logging.info('Killing the idling storescp processes')       
-        check_kill_process()
+        if storescp_processes >= niffler_processes:
+            logging.info('Killing the idling storescp processes')       
+            check_kill_process()
+  
+        logging.info("{0}: StoreScp process for the current Niffler extraction is starting now".format(
+            datetime.datetime.now()))
 
-    logging.info("{0}: StoreScp process for the current Niffler extraction is starting now".format(
-        datetime.datetime.now()))
+        if not file_path == cfind_only and not file_path == cfind_detailed:
+            subprocess.call("{0}/storescp --accept-unknown --directory {1} --filepath {2} -b {3} > storescp.out &".format(
+                DCM4CHE_BIN, storage_folder, file_path, QUERY_AET), shell=True)
 
-    if not file_path == cfind_only and not file_path == cfind_detailed:
-        subprocess.call("{0}/storescp --accept-unknown --directory {1} --filepath {2} -b {3} > storescp.out &".format(
-            DCM4CHE_BIN, storage_folder, file_path, QUERY_AET), shell=True)
+    else:
+        logging.info("{0}: This is an external AE. StoreScp will be started externally".format(datetime.datetime.now()))
 
+def get_all_dates_given_month(string_val):
+    date_format = '%Y%m'
+    dt_stamp = datetime.datetime.strptime(string_val, date_format)
+    month = dt_stamp.month
+    year = dt_stamp.year
+    no_of_days = calendar.monthrange(year, month)[1]
+    first_date = datetime.date(year, month, 1)
+    last_date = datetime.date(year, month, no_of_days)
+    delta = last_date-first_date
+    return (list(first_date+datetime.timedelta(days=i) for i in range(delta.days + 1)))
+
+def create_mod_csv_file(csv_filepath):
+    """
+    Handles and converts StudyMonth attribute to StudyDate.
+    """
+    df = pd.read_csv(csv_filepath)
+    if 'StudyMonth' in df.columns:
+        for i in range(len(df)):
+            df['StudyMonth'][i] = get_all_dates_given_month(str(df['StudyMonth'][i]))
+
+        for i in range(len(df)):
+            for col in df.columns:
+                if col != 'StudyMonth':
+                    df[col][i] = [str(df[col][i])] * len(df['StudyMonth'][i])
+
+        mod_df = pd.DataFrame(columns=df.columns)
+        for col in df.columns:
+            sample_list = []
+            sample_list.extend(df[col].values)
+            sample_list = list(itertools.chain(*sample_list))
+            mod_df[col] = sample_list
+
+        mod_df['StudyMonth'] = pd.to_datetime(mod_df['StudyMonth'], format='%Y-%m-%d')
+        mod_df = mod_df.rename(columns={'StudyMonth':'StudyDate'})
+        return (mod_df)
+    # To Do - Refactor the following code snippet without "for loop".
+    if 'AccessionNumber' in df.columns:
+        for i in range(len(df)):
+            if (len(str(df['AccessionNumber'][i])) > 16) and long_accession:
+                df['AccessionNumber'][i] = df['AccessionNumber'][i][0:7]+df['AccessionNumber'][i][9:]
+        return (df)
+    else:
+        return (df)
 
 def read_csv():
     """
     Read and parse the user provided csv file.
     """
     global length
-    with open(csv_file, newline='') as f:
+    df = create_mod_csv_file(mod_csv_file)
+    df.to_csv(mod_csv_file, index=False)
+    with open(mod_csv_file, newline='') as f:
         reader = csv.reader(f)
         next(f)
 
@@ -223,7 +282,6 @@ def convert_to_date_format(string_val):
     dt_stamp = datetime.datetime.strptime(temp_date, date_format)
     date_str = dt_stamp.strftime('%Y%m%d')
     return date_str
-
 
 def run_retrieval():
     """
@@ -321,8 +379,7 @@ def retrieve():
                     else:
                         subprocess.call("{0}/movescu -c {1} -b {2} -M PatientRoot -m PatientID={3} "
                                         "-m AccessionNumber={4} --dest {5}".format(DCM4CHE_BIN, SRC_AET, QUERY_AET,
-                                                                                   patient, accession, DEST_AET),
-                                        shell=True)
+                                                                                   patient, accession, DEST_AET), shell=True)
                     extracted_ones.append(temp_id)
             merge_temp_files()
 
@@ -478,7 +535,7 @@ def update_pickle():
     """
     Write the pickle file periodically to track the progress and persist it to the filesystem.
     """
-    with open(csv_file + '.pickle', 'wb') as f:
+    with open(mod_csv_file + '.pickle', 'wb') as f:
         pickle.dump(extracted_ones, f)
     logging.debug('Progress is recorded to the pickle file')
 
@@ -544,6 +601,8 @@ if __name__ == "__main__":
     ap.add_argument("--ThirdIndex", default=config['ThirdIndex'], type=int,
                     help="Set the CSV column index of third index query attribute. "
                          "Required only if the number of query attributes is 3")
+    ap.add_argument("--LongAccession", default=config['LongAccession'], type=bool,
+                    help="Allows Long Accession Numbers to be converted to default Acessions. Default true")
     ap.add_argument("--DateFormat", default=config['DateFormat'],
                     help="DateFormat can range from %Y%m%d, %m/%d/%y, %m-%d-%y, %%m%d%y, etc. Refer Readme.md.")
     ap.add_argument("--SendEmail", default=config['SendEmail'], type=bool,

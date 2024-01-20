@@ -26,6 +26,7 @@ Find the config.json file in the folder and modify accordingly *for each* Niffle
 
 * *YourEmail*: Replace "test@test.test" with a valid email if you would like to receive an email notification. If the SendEmail property is disabled, you can leave this as is.
 
+> Please adjust the *SplitIntoChunks* attribute, such that none of the metadata subfiles exceed 1 GB.
 
 ### Print the Images or Limit the Extraction to Include only the Common DICOM Attributes
 
@@ -134,3 +135,7 @@ If you just installed conda, make sure to close and open your terminal. Then, in
 ```
 $ conda install -c conda-forge -y gdcm 
 ```
+
+If a ```MemoryError``` pops up while extracting metadata and mapping dataframes, mentioned here in the [issue - 307](https://github.com/Emory-HITI/Niffler/issues/307).
+
+Reduce the no. of DICOM datapoints in the provided cohort/iteration or increase the no. of cohorts while extracting DICOMs through Cold Extraction.
