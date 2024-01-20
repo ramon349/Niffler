@@ -15,7 +15,7 @@ import pickle
 import argparse
 import numpy as np
 import pandas as pd
-import pydicom as dicom
+import pydicom as pyd 
 import png
 # pydicom imports needed to handle data errors
 from pydicom import config
@@ -114,6 +114,38 @@ def get_tuples(plan, PublicHeadersOnly, outlist=None, key=""):
     return outlist
 
 
+def extract_dcm(plan,dcm_path,PublicHeadersOnly=None,SaveImages=None,PngDestination=None,OutputDirectory=None,FailDirectory=None):
+
+    # checks all dicom fields to make sure they are valid
+    # if an error occurs, will delete it from the data structure
+    dcm_dict_copy = list(plan._dict.keys())
+
+    for tag in dcm_dict_copy:
+        try:
+            plan[tag]
+        except:
+            logging.warning("dropped fatal DICOM tag {}".format(tag))
+            del plan[tag]
+    c = True
+    try:
+        check = plan.pixel_array  # throws error if dicom file has no image
+        extract_images(plan,png_destination=PngDestination,failed=FailDirectory)
+    except:
+        c = False
+    kv = get_tuples(plan, PublicHeadersOnly)  # gets tuple for field,val pairs for this file. function defined above
+    dicom_tags_limit = 1000  #TODO: i should add this as some sort of extra limit in the config 
+    if len(kv) > dicom_tags_limit:
+        logging.debug(str(len(kv)) + " dicom tags produced by " + dcm_path)
+        copyfile(dcm_path,os.path.join(OutputDirectory,'failed-dicom',str(5),+ os.path.basename(dcm_path)) )
+    kv.append(('file', dcm_path))  # adds my custom field with the original filepath
+    kv.append(('has_pix_array', c))  # adds my custom field with if file has image
+    if c:
+        # adds my custom category field - useful if classifying images before processing
+        kv.append(('category', 'uncategorized'))
+    else:
+        kv.append(('category', 'no image'))  # adds my custom category field, makes note as imageless
+    return dict(kv)
+
 
 def rgb_store_format(arr):
     """ Create a  list containing pixels  in format expected by pypng 
@@ -136,48 +168,35 @@ def rgb_store_format(arr):
 # filemapping: dicom to png paths   (as str)
 # fail_path: dicom to failed folder (as tuple)
 # found_err: error code produced when processing
-def extract_images(filedata, i, png_destination, flattened_to_level, failed, is16Bit):
-    ds = dicom.dcmread(filedata.iloc[i].loc['file'], force=True)  # read file in
+def extract_images(ds, png_destination, flattened_to_level, failed, is16Bit):
     found_err = None
     filemapping = ""
     fail_path = ""
+    pdb.set_trace()
     try:
         im = ds.pixel_array  # pull image from read dicom
-        imName = os.path.split(filedata.iloc[i].loc['file'])[1][:-4]  # get file name ex: IM-0107-0022
+        ID1 = ds.PatientID.value
+        try: 
+            ID2 = ds.StudyInstanceUID.value
+        except: 
+            ID2 = "ALL-STUDIES" 
+        try:
+            ID3 = ds.SeriesInstanceUID.value 
+        except: 
+            ID3= "ALL-SERIES"
+        folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
+                        hashlib.sha224(ID2.encode('utf-8')).hexdigest()
 
-        if flattened_to_level == 'patient':
-            ID = filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            folderName = hashlib.sha224(ID.encode('utf-8')).hexdigest()
-            # check for existence of patient folder. Create if it does not exist.
-            os.makedirs(png_destination + folderName, exist_ok=True)
-        elif flattened_to_level == 'study':
-            ID1 = filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            try:
-                ID2 = filedata.iloc[i].loc['StudyInstanceUID']  # Unique identifier for the Study.
-            except:
-                ID2 = 'ALL-STUDIES'
-            folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID2.encode('utf-8')).hexdigest()
-            # check for existence of the folder tree patient/study/series. Create if it does not exist.
-            os.makedirs(png_destination + folderName, exist_ok=True)
-        else:
-            ID1 = filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            try:
-                ID2 = filedata.iloc[i].loc['StudyInstanceUID']  # Unique identifier for the Study.
-                ID3 = filedata.iloc[i].loc['SeriesInstanceUID']  # Unique identifier of the Series.
-            except:
-                ID2 = 'ALL-STUDIES'
-                ID3 = 'ALL-SERIES'
-            folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID2.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID3.encode('utf-8')).hexdigest()
-            # check for existence of the folder tree patient/study/series. Create if it does not exist.
-            os.makedirs(png_destination + folderName, exist_ok=True)
+        img_name = hashlib.sha224(ID3.encode('utf-8')).hexdigest() +'.png'
+         
+        # check for existence of the folder tree patient/study/series. Create if it does not exist.
+        os.makedirs(png_destination + folderName, exist_ok=True)
 
-        pngfile = png_destination + folderName + '/' + hashlib.sha224(imName.encode('utf-8')).hexdigest() + '.png'
-        dicom_path = filedata.iloc[i].loc['file']
-        image_path = png_destination + folderName + '/' + hashlib.sha224(imName.encode('utf-8')).hexdigest() + '.png'
-        isRGB = filedata.iloc[i].loc['PhotometricInterpretation'] == 'RGB'
+        pngfile = os.path.join(png_destination,folderName , img_name+ '.png')
+        try: 
+            isRGB = (ds.PhotometricInterpretation.value =='RGB')
+        except: 
+            isRGB = False  
         if is16Bit:
             # write the PNG file as a 16-bit greyscale 
             image_2d = ds.pixel_array.astype(np.double)
@@ -275,8 +294,14 @@ def fix_mismatch(with_VRs=['PN', 'DS', 'IS', 'LO', 'OB']):
 
 from pathlib import Path
 def proper_extraction(dcm_path,png_destination): 
+    dcm = pyd.dcmread(dcm_path) 
     try: 
-        dicom_tags = get_tuples(dcm_path)
+        dicom_tags = extract_headers() 
+    except: 
+        return  None  #figure out the paths for failure
+    try: 
+        (png_path )= extract_images()
+
 def execute(pickle_file=None, dicom_home=None, output_directory=None, print_images=None,
             processes=None,  SaveBatchSize=None,  png_destination=None,
             failed=None, maps_directory=None, meta_directory=None, LOG_FILENAME=None,PublicHeadersOnly=None):
