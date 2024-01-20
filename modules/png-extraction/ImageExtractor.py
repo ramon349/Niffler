@@ -44,6 +44,7 @@ Reasonings
 - i already use imap processign i could return the metadata file and the paths image extractd. Then i can save every n batch of extraction 
 - MOVING to just using chunking 
 - TODO: With the dicom tag processing what was the need for looking into sequence and evaluation. might be worth using the new approach i tried 
+-TODO: fix file not found error
 """
 def populate_extraction_dirs(output_directory): 
     png_destination = os.path.join(output_directory,'extracted-images')
@@ -98,16 +99,17 @@ def initialize_config_and_execute(config_values):
     final_res = execute(pickle_file=pickle_file,dicom_home=dicom_home,
     output_directory=output_directory,print_images=print_images,
     processes=processes,SaveBatchSize=SaveBatchSize,
-    png_destination=png_destination,failed=failed,maps_directory=maps_directory,
-    meta_directory=meta_directory,LOG_FILENAME=LOG_FILENAME,PublicHeadersOnly=PublicHeadersOnly)
+    png_destination=png_destination,failed=failed,
+    MetaDirectory=meta_directory,PublicHeadersOnly=PublicHeadersOnly)
     return final_res
 
 
 
 # Function for getting tuple for field,val pairs
-def get_tuples(plan, PublicHeadersOnly, outlist=None, key=""): 
+def get_tuples(plan, PublicHeadersOnly, key=""): 
     x = plan.keys()
     x = list(x)
+    outlist = list() 
     for i in x:
         if not i.is_private or PublicHeadersOnly==False:
             outlist.append((plan[i].name, plan[i].value))
@@ -168,25 +170,23 @@ def rgb_store_format(arr):
 # filemapping: dicom to png paths   (as str)
 # fail_path: dicom to failed folder (as tuple)
 # found_err: error code produced when processing
-def extract_images(ds, png_destination, flattened_to_level, failed, is16Bit):
+def extract_images(ds, png_destination,  failed):
     found_err = None
     filemapping = ""
     fail_path = ""
-    pdb.set_trace()
+    is16Bit=True
     try:
-        im = ds.pixel_array  # pull image from read dicom
-        ID1 = ds.PatientID.value
+        ID1 = str(ds.PatientID)
         try: 
-            ID2 = ds.StudyInstanceUID.value
+            ID2 = str(ds.StudyInstanceUID)
         except: 
             ID2 = "ALL-STUDIES" 
         try:
-            ID3 = ds.SeriesInstanceUID.value 
+            ID3 =str(ds.SeriesInstanceUID)
         except: 
             ID3= "ALL-SERIES"
         folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
                         hashlib.sha224(ID2.encode('utf-8')).hexdigest()
-
         img_name = hashlib.sha224(ID3.encode('utf-8')).hexdigest() +'.png'
          
         # check for existence of the folder tree patient/study/series. Create if it does not exist.
@@ -228,28 +228,22 @@ def extract_images(ds, png_destination, flattened_to_level, failed, is16Bit):
                 else:
                     w = png.Writer(shape[1], shape[0], greyscale=True)
                 w.write(png_file, image_2d_scaled)
-        filemapping = filedata.iloc[i].loc['file'] + ', ' + pngfile + '\n'
     except AttributeError as error:
         found_err = error
         logging.error(found_err)
-        fail_path = filedata.iloc[i].loc['file'], failed + '1/' + \
-                    os.path.split(filedata.iloc[i].loc['file'])[1][:-4] + '.dcm'
+        err_code = 1
+        pngfile=None
     except ValueError as error:
         found_err = error
         logging.error(found_err)
-        fail_path = filedata.iloc[i].loc['file'], failed + '2/' + \
-                    os.path.split(filedata.iloc[i].loc['file'])[1][:-4] + '.dcm'
+        err_code=2
+        pngfile = None 
     except BaseException as error:
         found_err = error
         logging.error(found_err)
-        fail_path = filedata.iloc[i].loc['file'], failed + '3/' + \
-                    os.path.split(filedata.iloc[i].loc['file'])[1][:-4] + '.dcm'
-    except Exception as error:
-        found_err = error
-        logging.error(found_err)
-        fail_path = filedata.iloc[i].loc['file'], failed + '4/' + \
-                    os.path.split(filedata.iloc[i].loc['file'])[1][:-4] + '.dcm'
-    return (filemapping, fail_path, found_err)
+        err_code=3
+        pngfile=None
+    return (pngfile, err_code, found_err)
 
 
 # Function when pydicom fails to read a value attempt to read as other types.
@@ -286,25 +280,23 @@ def fix_mismatch(with_VRs=['PN', 'DS', 'IS', 'LO', 'OB']):
     No return value.  The callback function will return either
     the original RawDataElement instance, or one with a fixed VR.
     """
-    dicom.config.data_element_callback = fix_mismatch_callback
+    pyd.config.data_element_callback = fix_mismatch_callback
     config.data_element_callback_kwargs = {
         'with_VRs': with_VRs,
     }
 
 
 from pathlib import Path
-def proper_extraction(dcm_path,png_destination): 
-    dcm = pyd.dcmread(dcm_path) 
-    try: 
-        dicom_tags = extract_headers() 
-    except: 
-        return  None  #figure out the paths for failure
-    try: 
-        (png_path )= extract_images()
+def proper_extraction(dcm_path,PNGdestination=None,PublicHeadersOnly=None,FailDir=None): 
+    dcm = pyd.dcmread(dcm_path,force=True) 
+    dicom_tags = extract_dcm(dcm,dcm_path=dcm_path,PublicHeadersOnly=PublicHeadersOnly) 
+    (png_path )= extract_images(dcm,png_destination=PNGdestination,failed=FailDir)
+    pdb.set_trace()
+
 
 def execute(pickle_file=None, dicom_home=None, output_directory=None, print_images=None,
             processes=None,  SaveBatchSize=None,  png_destination=None,
-            failed=None, maps_directory=None, meta_directory=None, LOG_FILENAME=None,PublicHeadersOnly=None):
+            failed=None, PublicHeadersOnly=None,MetaDirectory=None):
     err = None
     fix_mismatch() #TODO: Please check exactly what this might fix  
     core_count = processes
@@ -328,23 +320,13 @@ def execute(pickle_file=None, dicom_home=None, output_directory=None, print_imag
         logging.error("There is no file present in the given folder in " + dicom_home)
         sys.exit(1)
 
-    plan = dicom.dcmread(ff, force=True)
     logging.debug('Loaded the first file successfully')
 
-    keys = [(aa) for aa in plan.dir() if (hasattr(plan, aa) and aa != 'PixelData')]
-    # checks for images in fields and prints where they are #TODO: WHY DOES THIS EXIST 
-    for field in plan.dir():
-        if (hasattr(plan, field) and field != 'PixelData'):
-            entry = getattr(plan, field)
-            if type(entry) is bytes:
-                logging.debug(field)
-                logging.debug(str(entry))
     file_map_list = list() 
     meta_df_list = list()
-    pdb.set_trace()
     chunk_timestamp = time.time()
-    chunks = np.array_split(filelist,10)
-    outs = extract_headers((0,filelist[0],True,'./this/'))
+    for e in filelist: 
+        proper_extraction(dcm_path=e,PNGdestination=png_destination,PublicHeadersOnly=PublicHeadersOnly,FailDir=failed)
     pdb.set_trace() 
     pdb.set_trace()
 
