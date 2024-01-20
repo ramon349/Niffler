@@ -1,13 +1,9 @@
 {
-	"DICOMHome": "/mnt/storage/kaggle/xray_data",
-	"OutputDirectory": "/mnt/storage/kaggle/png_data",
-	"SplitIntoChunks": 10,
-	"PrintImages": true,
-	"CommonHeadersOnly": false,
+	"DICOMHome": "/media/Datacenter_storage/PublicDatasets/RSNA_Breast_Cancer/train_images/",
+	"OutputDirectory": "/media/Datacenter_storage/ramon_dataset_curations/niffler_rework/dumb",
+	"SaveBatchSize": 1000,
+	"SavePNGs": true,
 	"PublicHeadersOnly": true,
 	"SpecificHeadersOnly": false,
-	"UseProcesses": 0,
-	"is16Bit":true,
-	"SendEmail": true,
-	"YourEmail": "rlcorrea@asu.edu"
+	"NumProcesses": 5
 }

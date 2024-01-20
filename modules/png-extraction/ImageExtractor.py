@@ -19,57 +19,37 @@ import pydicom as dicom
 import png
 # pydicom imports needed to handle data errors
 from pydicom import config
-from pydicom import datadict
 from pydicom import values
-
-np.seterr(invalid='ignore')
-
+import sys 
 import pathlib
-
 configs = {}
-
-
-def initialize_config_and_execute(config_values):
-    global configs
-    configs = config_values
-    # Applying checks for paths
-
-    p1 = pathlib.PurePath(configs['DICOMHome'])
-    dicom_home = p1.as_posix()  # the folder containing your dicom files
-
-    p2 = pathlib.PurePath(configs['OutputDirectory'])
-    output_directory = p2.as_posix()
-
-    print_images = bool(configs['PrintImages'])
-    print_only_common_headers = bool(configs['CommonHeadersOnly'])
-    PublicHeadersOnly = bool(configs['PublicHeadersOnly'])
-    SpecificHeadersOnly = bool(configs['SpecificHeadersOnly'])
-    depth = int(configs['Depth'])
-    processes = float(configs['UseProcesses'])  # how many processes to use.
-    flattened_to_level = configs['FlattenedToLevel']
-    email = configs['YourEmail']
-    send_email = bool(configs['SendEmail'])
-    no_splits = int(configs['SplitIntoChunks'])
-    is16Bit = bool(configs['is16Bit'])
-
-    metadata_col_freq_threshold = 0.1
-
-    png_destination = output_directory + '/extracted-images/'
-    failed = output_directory + '/failed-dicom/'
-    maps_directory = output_directory + '/maps/'
-    meta_directory = output_directory + '/meta/'
-
-    LOG_FILENAME = output_directory + '/ImageExtractor.out'
-    pickle_file = output_directory + '/ImageExtractor.pickle'
-
-    # record the start time
-    t_start = time.time()
-
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-
-    logging.basicConfig(filename=LOG_FILENAME, level=logging.DEBUG)
-
+"""
+Reasonings 
+- removing the depth variable as we should be able to extract all dcm files in a directory. 
+- any trestriction should be dealt by the user no the library 
+- we remove the CommonHeadersOnly as that may be a limitation from the  public vs private header debate  
+- Flattening to a certain level is also remove. The groundtruth will be your metadata  and mapping file only use that 
+- if code requires something else then gg's 
+- email support will be added at a later time 
+- images should also be stored in whatever depth encoding they are 
+- we should store images in their original depth. forcing 8 bit to be 16 bit arbitrarly is odd 
+- TODO: We should ad an option to apply voi and LUT functiosn if needed 
+- alll path construction is done through joins so correct path seprators are used idk why worry about windows but here we are
+- Who uses the start time as a variable that is then passed as a parameter why was this a good idea 
+- People should be capable enough to figure out how many proceses they can use. We can set a default of 4 in case they have no idea 
+- Using 0.5 is odd choice 
+-refernece of depth  variable remove. just do a full search 
+- TODO: we should honestly just have a processing queue and have worker proceses doing he extraction and writing. 
+- Non need for chunking do everything in real time 
+- i already use imap processign i could return the metadata file and the paths image extractd. Then i can save every n batch of extraction 
+- MOVING to just using chunking 
+- TODO: With the dicom tag processing what was the need for looking into sequence and evaluation. might be worth using the new approach i tried 
+"""
+def populate_extraction_dirs(output_directory): 
+    png_destination = os.path.join(output_directory,'extracted-images')
+    failed = os.path.join(output_directory ,'failed-dicom')
+    maps_directory = os.path.join(output_directory ,'maps')
+    meta_directory = os.path.join(output_directory ,'meta')
     if not os.path.exists(maps_directory):
         os.makedirs(maps_directory)
 
@@ -82,114 +62,56 @@ def initialize_config_and_execute(config_values):
     if not os.path.exists(failed):
         os.makedirs(failed)
 
-    if not os.path.exists(failed + "/1"):
-        os.makedirs(failed + "/1")
+    for e in range(6): 
+        fail_dir = os.path.join(failed,str(e)) 
+        if not os.path.exists(fail_dir):
+            os.makedirs(fail_dir)
+    print(f"Done Creating Directories")
 
-    if not os.path.exists(failed + "/2"):
-        os.makedirs(failed + "/2")
+def initialize_config_and_execute(config_values):
+    global configs
+    configs = config_values
+    # Applying checks for paths
 
-    if not os.path.exists(failed + "/3"):
-        os.makedirs(failed + "/3")
+    dicom_home = str(pathlib.PurePath(configs['DICOMHome'])) #parse the path and convert it to a string 
+    output_directory = str(pathlib.Path(configs['OutputDirectory']))
+    #output_directory = p2.as_posix() # TODO: I donot udnerstand why this is needed 
 
-    if not os.path.exists(failed + "/4"):
-        os.makedirs(failed + "/4")
+    print_images = configs['SavePNGs']
+    PublicHeadersOnly = configs['PublicHeadersOnly']
+    processes =  configs['NumProcesses']
+    SaveBatchSize = configs['SaveBatchSize']
 
-    if not os.path.exists(failed + "/5"):
-        os.makedirs(failed + "/5")
+    png_destination = os.path.join(output_directory,'extracted-images')
+    failed = os.path.join(output_directory ,'failed-dicom')
+    maps_directory = os.path.join(output_directory ,'maps')
+    meta_directory = os.path.join(output_directory ,'meta')
+
+    LOG_FILENAME = os.path.join(output_directory ,'ImageExtractor.out')
+    pickle_file = os.path.join(output_directory ,'ImageExtractor.pickle') #TODO: i forgot what this does 
+    populate_extraction_dirs(output_directory=output_directory)
+
+    logging.basicConfig(filename=LOG_FILENAME, level=logging.DEBUG)
+
 
     logging.info("------- Values Initialization DONE -------")
-    final_res = execute(pickle_file, dicom_home, output_directory, print_images, print_only_common_headers, depth,
-                        processes, flattened_to_level, email, send_email, no_splits, is16Bit, png_destination,
-                        failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,
-                        SpecificHeadersOnly, PublicHeadersOnly)
+    final_res = execute(pickle_file=pickle_file,dicom_home=dicom_home,
+    output_directory=output_directory,print_images=print_images,
+    processes=processes,SaveBatchSize=SaveBatchSize,
+    png_destination=png_destination,failed=failed,maps_directory=maps_directory,
+    meta_directory=meta_directory,LOG_FILENAME=LOG_FILENAME,PublicHeadersOnly=PublicHeadersOnly)
     return final_res
 
 
+
 # Function for getting tuple for field,val pairs
-def get_tuples(plan, PublicHeadersOnly, outlist=None, key=""):
-    if len(key) > 0:
-        key = key + "_"
-    if not outlist:
-        outlist = []
-    for aa in plan.dir():
-        try:
-            hasattr(plan, aa)
-        except TypeError as e:
-            logging.warning('Type Error encountered')
-        if hasattr(plan, aa) and aa != 'PixelData':
-            value = getattr(plan, aa)
-            start = len(outlist)
-            # if dicom sequence extract tags from each element
-            if type(value) is dicom.sequence.Sequence:
-                for nn, ss in enumerate(list(value)):
-                    newkey = "_".join([key, ("%d" % nn), aa]) if len(key) else "_".join([("%d" % nn), aa])
-                    candidate = get_tuples(ss, PublicHeadersOnly, outlist=None, key=newkey)
-                    # if extracted tuples are too big condense to a string
-                    if len(candidate) > 2000:
-                        outlist.append((newkey, str(candidate)))
-                    else:
-                        outlist.extend(candidate)
-            else:
-                if type(value) is dicom.valuerep.DSfloat:
-                    value = float(value)
-                elif type(value) is dicom.valuerep.IS:
-                    value = str(value)
-                elif type(value) is dicom.valuerep.MultiValue:
-                    value = tuple(value)
-                elif type(value) is dicom.uid.UID:
-                    value = str(value)
-                outlist.append((key + aa, value))
-                # appends name, value pair for this file. these are later concatenated to the dataframe
-    # appends the private tags
-    if not PublicHeadersOnly:
-        x = plan.keys()
-        x = list(x)
-        for i in x:
-            if i.is_private:
-                outlist.append((plan[i].name, plan[i].value))
-
+def get_tuples(plan, PublicHeadersOnly, outlist=None, key=""): 
+    x = plan.keys()
+    x = list(x)
+    for i in x:
+        if not i.is_private or PublicHeadersOnly==False:
+            outlist.append((plan[i].name, plan[i].value))
     return outlist
-
-
-def extract_headers(f_list_elem):
-    nn, ff, PublicHeadersOnly, output_directory = f_list_elem  # unpack enumerated list
-    plan = dicom.dcmread(ff, force=True)  # reads in dicom file
-    # checks if this file has an image
-
-    # checks all dicom fields to make sure they are valid
-    # if an error occurs, will delete it from the data structure
-    dcm_dict_copy = list(plan._dict.keys())
-
-    for tag in dcm_dict_copy:
-        try:
-            plan[tag]
-        except:
-            logging.warning("dropped fatal DICOM tag {}".format(tag))
-            del plan[tag]
-
-    c = True
-    try:
-        check = plan.pixel_array  # throws error if dicom file has no image
-    except:
-        c = False
-    kv = get_tuples(plan, PublicHeadersOnly)  # gets tuple for field,val pairs for this file. function defined above
-
-    if PublicHeadersOnly:
-        dicom_tags_limit = 300
-    else:
-        dicom_tags_limit = 800
-
-    if len(kv) > dicom_tags_limit:
-        logging.debug(str(len(kv)) + " dicom tags produced by " + ff)
-        copyfile(ff, output_directory + '/failed-dicom/5/' + os.path.basename(ff))
-    kv.append(('file', f_list_elem[1]))  # adds my custom field with the original filepath
-    kv.append(('has_pix_array', c))  # adds my custom field with if file has image
-    if c:
-        # adds my custom category field - useful if classifying images before processing
-        kv.append(('category', 'uncategorized'))
-    else:
-        kv.append(('category', 'no image'))  # adds my custom category field, makes note as imageless
-    return dict(kv)
 
 
 
@@ -330,16 +252,6 @@ def fix_mismatch_callback(raw_elem, **kwargs):
                 raw_elem = raw_elem._replace(VR=vr)
     return raw_elem
 
-
-def get_path(depth, dicom_home):
-    directory = dicom_home + '/'
-    i = 0
-    while i < depth:
-        directory += "*/"
-        i += 1
-    return directory + "*.dcm"
-
-
 # Function used by pydicom.
 def fix_mismatch(with_VRs=['PN', 'DS', 'IS', 'LO', 'OB']):
     """A callback function to check that RawDataElements are translatable
@@ -361,74 +273,76 @@ def fix_mismatch(with_VRs=['PN', 'DS', 'IS', 'LO', 'OB']):
     }
 
 
-def execute(pickle_file, dicom_home, output_directory, print_images, print_only_common_headers, depth,
-            processes, flattened_to_level, email, send_email, no_splits, is16Bit, png_destination,
-            failed, maps_directory, meta_directory, LOG_FILENAME, metadata_col_freq_threshold, t_start,
-            SpecificHeadersOnly, PublicHeadersOnly):
+from pathlib import Path
+def proper_extraction(dcm_path,png_destination): 
+    try: 
+        dicom_tags = get_tuples(dcm_path)
+def execute(pickle_file=None, dicom_home=None, output_directory=None, print_images=None,
+            processes=None,  SaveBatchSize=None,  png_destination=None,
+            failed=None, maps_directory=None, meta_directory=None, LOG_FILENAME=None,PublicHeadersOnly=None):
     err = None
-    fix_mismatch()
-    if processes == 0.5:  # use half the cores to avoid  high ram usage
-        core_count = int(os.cpu_count() / 2)
-    elif processes == 0:  # use all the cores
-        core_count = int(os.cpu_count())
-    elif processes < os.cpu_count():  # use the specified number of cores to avoid high ram usage
-        core_count = processes
-    else:
-        core_count = int(os.cpu_count())
+    fix_mismatch() #TODO: Please check exactly what this might fix  
+    core_count = processes
     # gets all dicom files. if editing this code, get filelist into the format of a list of strings,
     # with each string as the file path to a different dicom file.
-    file_path = get_path(depth, dicom_home)
-
     if os.path.isfile(pickle_file):
         f = open(pickle_file, 'rb')
         filelist = pickle.load(f)
     else:
-        filelist = glob.glob(file_path,
-                             recursive=True)  # search the folders at the depth we request and finds all dicoms
+        print(dicom_home)
+        print("Getting all the dcms in your project. May take a while :)")
+        filelist = [str(e) for e in Path(dicom_home).rglob("*.dcm") ] 
         pickle.dump(filelist, open(pickle_file, 'wb'))
-        
     # if the number of files is less than the specified number of splits, then
-    if no_splits > len(filelist) and len(filelist) > 0:
-        no_splits = len(filelist)
         
-    file_chunks = np.array_split(filelist, no_splits)
     logging.info('Number of dicom files: ' + str(len(filelist)))
 
     try:
         ff = filelist[0]  # load first file as a template to look at all
     except IndexError:
-        logging.error("There is no file present in the given folder in " + file_path)
+        logging.error("There is no file present in the given folder in " + dicom_home)
         sys.exit(1)
 
     plan = dicom.dcmread(ff, force=True)
     logging.debug('Loaded the first file successfully')
 
     keys = [(aa) for aa in plan.dir() if (hasattr(plan, aa) and aa != 'PixelData')]
-    # checks for images in fields and prints where they are
+    # checks for images in fields and prints where they are #TODO: WHY DOES THIS EXIST 
     for field in plan.dir():
         if (hasattr(plan, field) and field != 'PixelData'):
             entry = getattr(plan, field)
             if type(entry) is bytes:
                 logging.debug(field)
                 logging.debug(str(entry))
+    file_map_list = list() 
+    meta_df_list = list()
+    pdb.set_trace()
+    chunk_timestamp = time.time()
+    chunks = np.array_split(filelist,10)
+    outs = extract_headers((0,filelist[0],True,'./this/'))
+    pdb.set_trace() 
+    pdb.set_trace()
 
-    for i, chunk in enumerate(file_chunks):
-
-        chunk_timestamp = time.time()
-
-        csv_destination = "{}/meta/metadata_{}.csv".format(output_directory, i)
-        mappings = "{}/maps/mapping_{}.csv".format(output_directory, i)
-        fm = open(mappings, "w+")
-        filemapping = 'Original DICOM file location, PNG location \n'
-        fm.write(filemapping)
-
-        # add a check to see if the metadata has already been extracted
-        # step through whole file list, read in file, append fields to future dataframe of all files
-
+    chunks_list = [tups + (PublicHeadersOnly,) + (output_directory,) for tups in enumerate(chunk)]
+    with Pool(core_count) as p:
+        for extract_out in p.imap_unordered(extract_image,filelist):
+            (fmap, fail_path,meta,err) = extract_out 
+            if  not err: 
+                meta_df_list.append(meta)
+                file_map_list.append(fmap)
+            if len(file_map_list) >= SaveBatchSize: 
+                #use a function to write a metadata batch file 
+                pass 
+            csv_destination = "{}/meta/metadata_{}.csv".format(output_directory, i)
+            mappings = "{}/maps/mapping_{}.csv".format(output_directory, i)
+            fm = open(mappings, "w+")
+            filemapping = 'Original DICOM file location, PNG location \n'
+            fm.write(filemapping)
         headerlist = []
         # start up a multi processing pool
         # for every item in filelist send data to a subprocess and run extract_headers func
         # output is then added to headerlist as they are completed (no ordering is done)
+
 
         with Pool(core_count) as p:
             # we send here print_only_public_headers bool value
@@ -552,30 +466,9 @@ def execute(pickle_file, dicom_home, output_directory, print_images, print_only_
     return logs
 
 
+def main():
+    from configs import get_params 
+    config = get_params()  
+    initialize_config_and_execute(config)
 if __name__ == "__main__":
-    with open('config.json', 'r') as f:
-        niffler = json.load(f)
-
-    # CLI Argument Parser
-    ap = argparse.ArgumentParser()
-
-    ap.add_argument("--DICOMHome", default=niffler['DICOMHome'])
-    ap.add_argument("--OutputDirectory", default=niffler['OutputDirectory'])
-    ap.add_argument("--Depth", default=niffler['Depth'])
-    ap.add_argument("--SplitIntoChunks", default=niffler['SplitIntoChunks'])
-    ap.add_argument("--PrintImages", default=niffler['PrintImages'])
-    ap.add_argument("--CommonHeadersOnly", default=niffler['CommonHeadersOnly'])
-    ap.add_argument("--PublicHeadersOnly", default=niffler['PublicHeadersOnly'])
-    ap.add_argument("--SpecificHeadersOnly", default=niffler['SpecificHeadersOnly'])
-    ap.add_argument("--UseProcesses", default=niffler['UseProcesses'])
-    ap.add_argument("--FlattenedToLevel", default=niffler['FlattenedToLevel'])
-    ap.add_argument("--is16Bit", default=niffler['is16Bit'])
-    ap.add_argument("--SendEmail", default=niffler['SendEmail'])
-    ap.add_argument("--YourEmail", default=niffler['YourEmail'])
-
-    args = vars(ap.parse_args())
-
-    if len(args) > 0:
-        initialize_config_and_execute(args)
-    else:
-        initialize_config_and_execute(niffler)
+    main() 
