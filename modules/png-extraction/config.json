@@ -1,6 +1,6 @@
 {
-	"DICOMHome": "/media/Datacenter_storage/PublicDatasets/RSNA_Breast_Cancer/train_images/",
-	"OutputDirectory": "/media/Datacenter_storage/ramon_dataset_curations/niffler_rework/dumb",
+	"DICOMHome": ",
+	"OutputDirectory": "",
 	"SaveBatchSize": 20,
 	"SavePNGs": true,
 	"PublicHeadersOnly": true,
