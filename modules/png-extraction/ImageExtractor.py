@@ -424,7 +424,9 @@ def execute(
                 logging.info(
                     "Chunk run time: %s %s", time.time() - chunk_timestamp, " seconds!"
                 )
-
+    if len(meta_rows) >0: 
+        meta_df = pd.DataFrame(meta_rows)
+        meta_df.to_csv(csv_destination)
     meta_directory = f"{output_directory}/meta/"
     metas = glob.glob(f"{meta_directory}*.csv")
     merged_meta = pd.DataFrame()
