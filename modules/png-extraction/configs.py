@@ -40,17 +40,19 @@ def build_args():
         Since i entirely expect to load from config files the behavior is
         1.
     """
-    parser = argparse.ArgumentParser(
-        description="Confguration for png extraction"
-    )
+    parser = argparse.ArgumentParser(description="Confguration for png extraction")
     parser.add_argument(
         "--DICOMHome",
         required=True,
         type=str,
-        help="Path to where dicom images are stored"
+        help="Path to where dicom images are stored",
     )  # TODO: uPDATE README TO EXPLAIN CONFI OF PICKLE FILE
     parser.add_argument(
-        "--ConfigPath", required=False, type=open, action=LoadFromFile, help="Path to your config file"
+        "--ConfigPath",
+        required=False,
+        type=open,
+        action=LoadFromFile,
+        help="Path to your config file",
     )
     parser.add_argument(
         "--OutputDirectory",
@@ -65,21 +67,17 @@ def build_args():
         default=2000,
         help="Save the metadata in in batches of N as we extracted them ",
     )
-    parser.add_argument("--SavePNGs", required=True, type=bool, help="Save Images as PNGs")
+    parser.add_argument(
+        "--SavePNGs", required=True, type=bool, help="Save Images as PNGs"
+    )
     parser.add_argument("--NumProcesses", type=int, required=True)
-    parser.add_argument(
-        "--PublicHeadersOnly", type=bool,required=True,default=True
-    )
-    parser.add_argument(
-        "--SpecificHeadersOnly", type=str, required=True, default=False
-    )
+    parser.add_argument("--PublicHeadersOnly", type=bool, required=True, default=True)
+    parser.add_argument("--SpecificHeadersOnly", type=str, required=True, default=False)
     return parser
 
 
 def get_params():
     args = build_args()
     my_args = args.parse_args()
-    arg_dict = vars(my_args) 
+    arg_dict = vars(my_args)
     return arg_dict
-
-

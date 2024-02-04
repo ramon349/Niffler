@@ -24,35 +24,34 @@ from pydicom import values
 import sys
 import pathlib
 from pathlib import Path
-from functools import partial 
+from functools import partial
+from configs import get_params
 
 configs = {}  # TODO:  WHY IS THIS GLOBAL
 """
 Reasonings 
 - removing the depth variable as we should be able to extract all dcm files in a directory. 
 - any trestriction should be dealt by the user no the library 
-- we remove the CommonHeadersOnly as that may be a limitation from the  public vs private header debate  
-- Flattening to a certain level is also remove. The groundtruth will be your metadata  and mapping file only use that 
-- if code requires something else then gg's 
-- email support will be added at a later time 
-- images should also be stored in whatever depth encoding they are 
-- we should store images in their original depth. forcing 8 bit to be 16 bit arbitrarly is odd 
-- TODO: We should ad an option to apply voi and LUT functiosn if needed 
-- alll path construction is done through joins so correct path seprators are used idk why worry about windows but here we are
-- Who uses the start time as a variable that is then passed as a parameter why was this a good idea 
-- People should be capable enough to figure out how many proceses they can use. We can set a default of 4 in case they have no idea 
-- Using 0.5 is odd choice 
--refernece of depth  variable remove. just do a full search 
+- we remove the CommonHeadersOnly temporarly. Public vs private headers provides an idirect fix. 
+- Flattening to a certain level is also remove. Navigating files should be based on metadatafile.
+- TODO: email support will be re-introduced later 
+- TODO:  images should be stored in whatever depth encoding they are
+- TODO: we should store images in their original depth. forcing 8 bit to be 16 bit arbitrarly is odd 
+- TODO: We should ad an option to apply voi and LUT functiosn especially if using PNG extraction  
 - TODO: we should honestly just have a processing queue and have worker proceses doing he extraction and writing. 
-- Non need for chunking do everything in real time 
-- i already use imap processign i could return the metadata file and the paths image extractd. Then i can save every n batch of extraction 
-- MOVING to just using chunking 
 - TODO: With the dicom tag processing what was the need for looking into sequence and evaluation. might be worth using the new approach i tried 
--TODO: fix file not found error
+- TODO: Remove mention of maps directory it is no longer used 
+- TODO: Addd some salt parameter to the image naming process. Store it in the image extracter log for backtracking
+- TODO: have the fileliest loading check the existing metadata files and filter based on already extracted images 
 """
 
 
-def populate_extraction_dirs(output_directory):
+def populate_extraction_dirs(output_directory: str):
+    """
+    Images and metadata will be stored in output_directory. This function defines subfolders such as
+    metadata and failed dicom folders
+    output_directory: str   absolute path to the folder meant to store output artiacts (logs,images,metadata)
+    """
     png_destination = os.path.join(output_directory, "extracted-images")
     failed = os.path.join(output_directory, "failed-dicom")
     maps_directory = os.path.join(output_directory, "maps")
@@ -76,8 +75,10 @@ def populate_extraction_dirs(output_directory):
     print(f"Done Creating Directories")
 
 
-def initialize_config_and_execute(config_values):
-    global configs
+def initialize_config_and_execute(config_values: dict):
+    """
+    Does all the set up regarding folder setup
+    """
     configs = config_values
     # Applying checks for paths
 
@@ -94,7 +95,6 @@ def initialize_config_and_execute(config_values):
 
     png_destination = os.path.join(output_directory, "extracted-images")
     failed = os.path.join(output_directory, "failed-dicom")
-    maps_directory = os.path.join(output_directory, "maps")
     meta_directory = os.path.join(output_directory, "meta")
 
     LOG_FILENAME = os.path.join(output_directory, "ImageExtractor.out")
@@ -163,7 +163,9 @@ def extract_dcm(
     dicom_tags_limit = (
         1000  # TODO: i should add this as some sort of extra limit in the config
     )
-    if len(kv) > dicom_tags_limit: #TODO this should not fail silently. What can we do  about it 
+    if (
+        len(kv) > dicom_tags_limit
+    ):  # TODO this should not fail silently. What can we do  about it
         logging.debug(str(len(kv)) + " dicom tags produced by " + dcm_path)
         copyfile(
             dcm_path,
@@ -206,10 +208,15 @@ def rgb_store_format(arr):
 # fail_path: dicom to failed folder (as tuple)
 # found_err: error code produced when processing
 def extract_images(ds, png_destination, failed):
-    err_code = None 
+    """
+    Function that  extracts a dicom pixel arrayinto a png image. Patient metadata is used to create the file name
+    Supports extracting either RGB or Monochrome images. No LUT or VOI is applied at the moment
+    Returns
+    pngFile --> path to extract png file or None if extraction failed
+    err_code --> error code experience dduring extraction. None if no failoure occurs
+    """
+    err_code = None
     found_err = None
-    filemapping = ""
-    fail_path = ""
     is16Bit = True
     try:
         ID1 = str(ds.PatientID)
@@ -218,7 +225,7 @@ def extract_images(ds, png_destination, failed):
         except:
             ID2 = "ALL-STUDIES"
         try:
-            ID3 = str(ds.SeriesInstanceUID)
+            ID3 = str(ds.SOPInstanceUID)
         except:
             ID3 = "ALL-SERIES"
         folderName = (
@@ -231,9 +238,9 @@ def extract_images(ds, png_destination, failed):
 
         # check for existence of the folder tree patient/study/series. Create if it does not exist.
 
-        store_dir = os.path.join(png_destination,folderName)
-        os.makedirs(store_dir,exist_ok=True)
-        pngfile = os.path.join(store_dir,img_name )
+        store_dir = os.path.join(png_destination, folderName)
+        os.makedirs(store_dir, exist_ok=True)
+        pngfile = os.path.join(store_dir, img_name)
         try:
             isRGB = ds.PhotometricInterpretation.value == "RGB"
         except:
@@ -289,6 +296,9 @@ def extract_images(ds, png_destination, failed):
 
 # Function when pydicom fails to read a value attempt to read as other types.
 def fix_mismatch_callback(raw_elem, **kwargs):
+    """
+    Specify alternative variable reprepresentations when trying to parse metadata.
+    """
     try:
         if raw_elem.VR:
             values.convert_value(raw_elem.VR, raw_elem)
@@ -307,7 +317,7 @@ def fix_mismatch_callback(raw_elem, **kwargs):
     return raw_elem
 
 
-# Function used by pydicom.
+# taken from pydicom docs
 def fix_mismatch(with_VRs=["PN", "DS", "IS", "LO", "OB"]):
     """A callback function to check that RawDataElements are translatable
     with their provided VRs.  If not, re-attempt translation using
@@ -329,26 +339,28 @@ def fix_mismatch(with_VRs=["PN", "DS", "IS", "LO", "OB"]):
 
 
 def proper_extraction(
-    dcmPath, pngDestination:str=None, publicHeadersOnly:str =None, failDir:str=None
+    dcmPath,
+    pngDestination: str = None,
+    publicHeadersOnly: str = None,
+    failDir: str = None,
 ):
     """
     Run the dicom extraction. We first extract the metadata then we save the image informaiton
     dcm_path: absolute path to a dicom file
     pngDestination: Where to store extracted pngs
-    publicHeadersOnly
+    publicHeadersOnly: only use public headers
     """
     dcm = pyd.dcmread(dcmPath, force=True)
     dicom_tags = extract_dcm(dcm, dcm_path=dcmPath, PublicHeadersOnly=publicHeadersOnly)
-    if pngDestination and dicom_tags is not None :
+    if pngDestination and dicom_tags is not None:
         png_path, err_code = extract_images(
             dcm, png_destination=pngDestination, failed=failDir
         )
-    else: 
-        png_path = None 
-    dicom_tags['png_path'] = png_path
-    dicom_tags['err_code'] = err_code
-    return dicom_tags 
-    
+    else:
+        png_path = None
+    dicom_tags["png_path"] = png_path
+    dicom_tags["err_code"] = err_code
+    return dicom_tags
 
 
 def execute(
@@ -389,35 +401,38 @@ def execute(
     logging.debug("Loaded the first file successfully")
 
     chunk_timestamp = time.time()
-    filelist = filelist[0:100]
-    extractor = partial(proper_extraction,pngDestination=png_destination,publicHeadersOnly=PublicHeadersOnly,failDir=failed)
-    meta_rows = list()  
+    # TODO: if there is a more understandable way of using imap where some parameters that are constant let me know
+    # some version of python has it so you can define keyword args will look into later
+    extractor = partial(
+        proper_extraction,
+        pngDestination=png_destination,
+        publicHeadersOnly=PublicHeadersOnly,
+        failDir=failed,
+    )
+    meta_rows = list()
     t_start = time.time()
-    counter = 0 
-    with Pool(core_count) as p: 
-        for i,dcm_meta in  enumerate(p.imap_unordered(extractor,filelist)): 
+    counter = 0
+    with Pool(core_count) as p:
+        for i, dcm_meta in enumerate(p.imap_unordered(extractor, filelist)):
             meta_rows.append(dcm_meta)
-            if len(meta_rows) >= SaveBatchSize: 
+            if len(meta_rows) >= SaveBatchSize:
                 meta_df = pd.DataFrame(meta_rows)
-                meta_rows = list() 
+                meta_rows = list()
                 csv_destination = f"{output_directory}/meta/metadata_{counter}.csv"
-                counter +=1 
+                counter += 1
                 meta_df.to_csv(csv_destination)
                 logging.info(
                     "Chunk run time: %s %s", time.time() - chunk_timestamp, " seconds!"
-                ) 
+                )
 
     meta_directory = f"{output_directory}/meta/"
     metas = glob.glob(f"{meta_directory}*.csv")
-    # for each meta  file identify the columns that are not na's for at least 10% (metadata_col_freq_threshold) of data
-    # merging_meta
     merged_meta = pd.DataFrame()
+    # TODO:  Right now we do not fillter out empty metadata columsn. add it in the future?
     for meta in metas:
         m = pd.read_csv(meta, dtype="str")
         merged_meta = pd.concat([merged_meta, m], ignore_index=True)
     merged_meta.to_csv("{}/metadata.csv".format(output_directory), index=False)
-    # getting a single mapping file
-    # Record the total run-time
     logging.info("Total run time: %s %s", time.time() - t_start, " seconds!")
     logging.shutdown()  # Closing logging file after extraction is done !!
     logs = []
@@ -427,8 +442,6 @@ def execute(
 
 
 def main():
-    from configs import get_params
-
     config = get_params()
     initialize_config_and_execute(config)
 
