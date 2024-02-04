@@ -24,6 +24,7 @@ from pydicom import values
 import sys
 import pathlib
 from pathlib import Path
+from functools import partial 
 
 configs = {}  # TODO:  WHY IS THIS GLOBAL
 """
@@ -162,7 +163,7 @@ def extract_dcm(
     dicom_tags_limit = (
         1000  # TODO: i should add this as some sort of extra limit in the config
     )
-    if len(kv) > dicom_tags_limit:
+    if len(kv) > dicom_tags_limit: #TODO this should not fail silently. What can we do  about it 
         logging.debug(str(len(kv)) + " dicom tags produced by " + dcm_path)
         copyfile(
             dcm_path,
@@ -225,7 +226,8 @@ def extract_images(ds, png_destination, failed):
             + "/"
             + hashlib.sha224(ID2.encode("utf-8")).hexdigest()
         )
-        img_name = hashlib.sha224(ID3.encode("utf-8")).hexdigest() + ".png"
+        img_iden = f"{ID3}"
+        img_name = hashlib.sha224(img_iden.encode("utf-8")).hexdigest() + ".png"
 
         # check for existence of the folder tree patient/study/series. Create if it does not exist.
 
@@ -282,7 +284,7 @@ def extract_images(ds, png_destination, failed):
         logging.error(found_err)
         err_code = 3
         pngfile = None
-    return (pngfile, err_code, found_err)
+    return (pngfile, err_code)
 
 
 # Function when pydicom fails to read a value attempt to read as other types.
@@ -337,10 +339,15 @@ def proper_extraction(
     """
     dcm = pyd.dcmread(dcmPath, force=True)
     dicom_tags = extract_dcm(dcm, dcm_path=dcmPath, PublicHeadersOnly=publicHeadersOnly)
-    if pngDestination:
-        (png_path) = extract_images(
+    if pngDestination and dicom_tags is not None :
+        png_path, err_code = extract_images(
             dcm, png_destination=pngDestination, failed=failDir
-        ) 
+        )
+    else: 
+        png_path = None 
+    dicom_tags['png_path'] = png_path
+    dicom_tags['err_code'] = err_code
+    return dicom_tags 
     
 
 
@@ -381,181 +388,35 @@ def execute(
 
     logging.debug("Loaded the first file successfully")
 
-    file_map_list = list()
-    meta_df_list = list()
     chunk_timestamp = time.time()
-    filelist = filelist[0:10]
-    for e in filelist:
-        proper_extraction(
-            dcmPath=e,
-            pngDestination=png_destination,
-            publicHeadersOnly=PublicHeadersOnly,
-            failDir=failed,
-        )
-    pdb.set_trace()
-    sys.exit(0)
-    chunks_list = [
-        tups + (PublicHeadersOnly,) + (output_directory,) for tups in enumerate(chunk)
-    ]
-    with Pool(core_count) as p:
-        for extract_out in p.imap_unordered(extract_image, filelist):
-            (fmap, fail_path, meta, err) = extract_out
-            if not err:
-                meta_df_list.append(meta)
-                file_map_list.append(fmap)
-            if len(file_map_list) >= SaveBatchSize:
-                # use a function to write a metadata batch file
-                pass
-            csv_destination = "{}/meta/metadata_{}.csv".format(output_directory, i)
-            mappings = "{}/maps/mapping_{}.csv".format(output_directory, i)
-            fm = open(mappings, "w+")
-            filemapping = "Original DICOM file location, PNG location \n"
-            fm.write(filemapping)
-        headerlist = []
-        # start up a multi processing pool
-        # for every item in filelist send data to a subprocess and run extract_headers func
-        # output is then added to headerlist as they are completed (no ordering is done)
+    filelist = filelist[0:100]
+    extractor = partial(proper_extraction,pngDestination=png_destination,publicHeadersOnly=PublicHeadersOnly,failDir=failed)
+    meta_rows = list()  
+    t_start = time.time()
+    counter = 0 
+    with Pool(core_count) as p: 
+        for i,dcm_meta in  enumerate(p.imap_unordered(extractor,filelist)): 
+            meta_rows.append(dcm_meta)
+            if len(meta_rows) >= SaveBatchSize: 
+                meta_df = pd.DataFrame(meta_rows)
+                meta_rows = list() 
+                csv_destination = f"{output_directory}/meta/metadata_{counter}.csv"
+                counter +=1 
+                meta_df.to_csv(csv_destination)
+                logging.info(
+                    "Chunk run time: %s %s", time.time() - chunk_timestamp, " seconds!"
+                ) 
 
-        with Pool(core_count) as p:
-            # we send here print_only_public_headers bool value
-            chunks_list = [
-                tups + (PublicHeadersOnly,) + (output_directory,)
-                for tups in enumerate(chunk)
-            ]
-            res = p.imap_unordered(extract_headers, chunks_list)
-            for i, e in enumerate(res):
-                headerlist.append(e)
-        data = pd.DataFrame(headerlist)
-        logging.info(
-            "Chunk " + str(i) + " Number of fields per file : " + str(len(data.columns))
-        )
-        # export csv file of final dataframe
-        if SpecificHeadersOnly:
-            try:
-                feature_list = open("featureset.txt").read().splitlines()
-                features = []
-                for j in feature_list:
-                    if j in data.columns:
-                        features.append(j)
-                meta_data = data[features]
-            except:
-                meta_data = data
-                logging.error("featureset.txt not found")
-        else:
-            meta_data = data
-
-        fields = data.keys()
-        export_csv = meta_data.to_csv(csv_destination, index=None, header=True)
-        count = 0  # potential painpoint
-        # writting of log handled by main process
-        if print_images:
-            logging.info("Start processing Images")
-            filedata = data
-            total = len(chunk)
-            stamp = time.time()
-            for i in range(len(filedata)):
-                if filedata.iloc[i].loc["file"] is not np.nan:
-                    (fmap, fail_path, err) = extract_images(
-                        filedata,
-                        i,
-                        png_destination,
-                        flattened_to_level,
-                        failed,
-                        is16Bit,
-                    )
-                    if err:
-                        count += 1
-                        copyfile(fail_path[0], fail_path[1])
-                        err_msg = (
-                            str(count)
-                            + " out of "
-                            + str(len(chunk))
-                            + " dicom images have failed extraction"
-                        )
-                        logging.error(err_msg)
-                    else:
-                        fm.write(fmap)
-        fm.close()
-        logging.info(
-            "Chunk run time: %s %s", time.time() - chunk_timestamp, " seconds!"
-        )
-
-    logging.info("Generating final metadata file")
-
-    col_names = dict()
-    all_headers = dict()
-    total_length = 0
-
-    metas = glob.glob("{}*.csv".format(meta_directory))
+    meta_directory = f"{output_directory}/meta/"
+    metas = glob.glob(f"{meta_directory}*.csv")
     # for each meta  file identify the columns that are not na's for at least 10% (metadata_col_freq_threshold) of data
-    if print_only_common_headers:
-        for meta in metas:
-            m = pd.read_csv(meta, dtype="str")
-            d_len = m.shape[0]
-            total_length += d_len
-
-            for e in m.columns:
-                col_pop = d_len - np.sum(
-                    m[e].isna()
-                )  # number of populated rows for this column in this metadata file
-
-                if e in col_names:
-                    col_names[e] += col_pop
-                else:
-                    col_names[e] = col_pop
-
-                # all_headers keeps track of number of appearances of each header. We later use this count to ensure that
-                # the headers we use are present in all metadata files.
-                if e in all_headers:
-                    all_headers[e] += 1
-                else:
-                    all_headers[e] = 1
-
-        loadable_names = list()
-        for k in col_names.keys():
-            if (
-                k in all_headers and all_headers[k] >= no_splits
-            ):  # no_splits == number of batches used
-                if col_names[k] >= metadata_col_freq_threshold * total_length:
-                    loadable_names.append(
-                        k
-                    )  # use header only if it's present in every metadata file
-
-        # load every metadata file using only valid columns
-        meta_list = list()
-        for meta in metas:
-            m = pd.read_csv(meta, dtype="str", usecols=loadable_names)
-            meta_list.append(m)
-        merged_meta = pd.concat(meta_list, ignore_index=True)
-    else:
-        # merging_meta
-        merged_meta = pd.DataFrame()
-        for meta in metas:
-            m = pd.read_csv(meta, dtype="str")
-            merged_meta = pd.concat([merged_meta, m], ignore_index=True)
-    # for only common header
-    if print_only_common_headers:
-        mask_common_fields = merged_meta.isnull().mean() < 0.1
-        common_fields = list(np.asarray(merged_meta.columns)[mask_common_fields])
-        merged_meta = merged_meta[common_fields]
-
+    # merging_meta
+    merged_meta = pd.DataFrame()
+    for meta in metas:
+        m = pd.read_csv(meta, dtype="str")
+        merged_meta = pd.concat([merged_meta, m], ignore_index=True)
     merged_meta.to_csv("{}/metadata.csv".format(output_directory), index=False)
     # getting a single mapping file
-    logging.info("Generating final mapping file")
-    mappings = glob.glob("{}/maps/*.csv".format(output_directory))
-    map_list = list()
-    for mapping in mappings:
-        map_list.append(pd.read_csv(mapping, dtype="str"))
-    merged_maps = pd.concat(map_list, ignore_index=True)
-
-    merged_maps.to_csv("{}/mapping.csv".format(output_directory), index=False)
-
-    if send_email:
-        subprocess.call(
-            'echo "Niffler has successfully completed the png conversion" | mail -s "The image conversion'
-            ' has been complete" {0}'.format(email),
-            shell=True,
-        )
     # Record the total run-time
     logging.info("Total run time: %s %s", time.time() - t_start, " seconds!")
     logging.shutdown()  # Closing logging file after extraction is done !!
