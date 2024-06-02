@@ -172,38 +172,15 @@ def extract_images(filedata, i, nifti_destination, flattened_to_level, failed, i
     filemapping = ""
     fail_path = ""
     try:
-        if flattened_to_level == 'patient':
-            ID = filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            folderName = hashlib.sha224(ID.encode('utf-8')).hexdigest()
-            # check for existence of patient folder. Create if it does not exist.
-            os.makedirs(nifti_destination + folderName,exist_ok=True)
-        elif flattened_to_level == 'study':
-            ID1 = filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            try:
-                ID2 = filedata.iloc[i].loc['StudyInstanceUID']  # Unique identifier for the Study.
-            except:
-                ID2='ALL-STUDIES'
-            folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID2.encode('utf-8')).hexdigest()
-            # check for existence of the folder tree patient/study/series. Create if it does not exist.
-            os.makedirs(nifti_destination + folderName,exist_ok=True)
-            imName = hashlib.sha224(filedata.iloc[i].loc['SeriesDescription'].encode('utf-8')).hexdigest() 
-        else:
-            ID1=filedata.iloc[i].loc['PatientID']  # Unique identifier for the Patient.
-            try:
-                ID2=filedata.iloc[i].loc['StudyInstanceUID']  # Unique identifier for the Study.
-                ID3=filedata.iloc[i].loc['SeriesInstanceUID']  # Unique identifier of the Series.
-            except:
-                ID2='ALL-STUDIES'
-                ID3='ALL-SERIES'
-            folderName = hashlib.sha224(ID1.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID2.encode('utf-8')).hexdigest() + "/" + \
-                         hashlib.sha224(ID3.encode('utf-8')).hexdigest()
-            # check for existence of the folder tree patient/study/series. Create if it does not exist.
-            os.makedirs(nifti_destination + folderName,exist_ok=True)
+        orig_path = str(filedata.iloc[i].loc['file'])
+        ID2=filedata.iloc[i].loc['StudyInstanceUID']  # Unique identifier for the Study.
+        folderName = hashlib.sha224(ID2.encode('utf-8')).hexdigest()
+        fname = hashlib.sha224(orig_path.encode('utf-8')).hexdigest()
+        # check for existence of the folder tree patient/study/series. Create if it does not exist.
+        folder_path = os.path.join(nifti_destination,folderName)
+        os.makedirs(folder_path,exist_ok=True)
 
-
-        niftifile = nifti_destination+folderName + '/' +ID1 +'_' +ID2 +'_' +ID3 + '.nii.gz'
+        niftifile = os.path.join(folder_path,f"{fname}.nii.gz")
         dicom2nifti.dicom_series_to_nifti(str(filedata.iloc[i].loc['file']),niftifile)
         filemapping = filedata.iloc[i].loc['file'] + ',' + niftifile + '\n'
     except AttributeError as error:
