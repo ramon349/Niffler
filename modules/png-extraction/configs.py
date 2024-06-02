@@ -71,8 +71,9 @@ def build_args():
         "--SavePNGs", required=True, type=bool, help="Save Images as PNGs"
     )
     parser.add_argument("--NumProcesses", type=int, required=True)
-    parser.add_argument("--PublicHeadersOnly", type=bool, required=True, default=True)
+    parser.add_argument("--PublicHeadersOnly", type=parse_bool, required=True, default=True)
     parser.add_argument("--SpecificHeadersOnly", type=str, required=True, default=False)
+    parser.add_argument("--ApplyVOILUT",type=parse_bool,required=True,default=True)
     return parser
 
 

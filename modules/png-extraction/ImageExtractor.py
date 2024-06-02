@@ -92,7 +92,6 @@ def initialize_config_and_execute(config_values: dict):
     PublicHeadersOnly = configs["PublicHeadersOnly"]
     processes = configs["NumProcesses"]
     SaveBatchSize = configs["SaveBatchSize"]
-
     png_destination = os.path.join(output_directory, "extracted-images")
     failed = os.path.join(output_directory, "failed-dicom")
     meta_directory = os.path.join(output_directory, "meta")
@@ -101,6 +100,7 @@ def initialize_config_and_execute(config_values: dict):
     pickle_file = os.path.join(
         output_directory, "ImageExtractor.pickle"
     )  # TODO: i forgot what this does
+    ApplyVOILUT= configs['ApplyVOILUT']
     populate_extraction_dirs(output_directory=output_directory)
 
     logging.basicConfig(filename=LOG_FILENAME, level=logging.DEBUG)
@@ -117,6 +117,7 @@ def initialize_config_and_execute(config_values: dict):
         failed=failed,
         MetaDirectory=meta_directory,
         PublicHeadersOnly=PublicHeadersOnly,
+        ApplyVOILUT=ApplyVOILUT,
     )
     return final_res
 
@@ -207,7 +208,7 @@ def rgb_store_format(arr):
 # filemapping: dicom to png paths   (as str)
 # fail_path: dicom to failed folder (as tuple)
 # found_err: error code produced when processing
-def extract_images(ds, png_destination, failed):
+def extract_images(ds, png_destination, failed,ApplyVOILut=False):
     """
     Function that  extracts a dicom pixel arrayinto a png image. Patient metadata is used to create the file name
     Supports extracting either RGB or Monochrome images. No LUT or VOI is applied at the moment
@@ -343,6 +344,8 @@ def proper_extraction(
     pngDestination: str = None,
     publicHeadersOnly: str = None,
     failDir: str = None,
+    print_images=None,
+    ApplyVOILUT=False
 ):
     """
     Run the dicom extraction. We first extract the metadata then we save the image informaiton
@@ -352,9 +355,9 @@ def proper_extraction(
     """
     dcm = pyd.dcmread(dcmPath, force=True)
     dicom_tags = extract_dcm(dcm, dcm_path=dcmPath, PublicHeadersOnly=publicHeadersOnly)
-    if pngDestination and dicom_tags is not None:
+    if print_images and dicom_tags is not None:
         png_path, err_code = extract_images(
-            dcm, png_destination=pngDestination, failed=failDir
+            dcm, png_destination=pngDestination, failed=failDir,ApplyVOILUT=ApplyVOILUT
         )
     else:
         png_path = None
@@ -374,6 +377,7 @@ def execute(
     failed=None,
     PublicHeadersOnly=None,
     MetaDirectory=None,
+    ApplyVOILUT=False
 ):
     err = None
     fix_mismatch()  # TODO: Please check exactly what this might fix
@@ -408,6 +412,8 @@ def execute(
         pngDestination=png_destination,
         publicHeadersOnly=PublicHeadersOnly,
         failDir=failed,
+        print_images =print_images,
+        ApplyVOILUT=ApplyVOILUT
     )
     meta_rows = list()
     t_start = time.time()
