@@ -201,28 +201,30 @@ def rgb_store_format(arr):
             flat_out[-1].extend(k)
     return flat_out
 
-def process_image(ds,is16Bit,apply_voi=False,apply_lut=False):
+def process_image(ds,is16Bit,ApplyVOILUT=False):
     try:
         isRGB = ds.PhotometricInterpretation.value == "RGB"
     except:
         isRGB = False
     image_2d = ds.pixel_array 
-    if apply_voi or apply_lut: 
-        image_2d = apply_voi(image_2d,ds,prefer_lut=True)
+    if ApplyVOILUT: 
+        image_2d = apply_voi_lut(image_2d,ds,prefer_lut=True)
     image_2d = image_2d.astype(float)
     shape = ds.pixel_array.shape
     if is16Bit:
         # write the PNG file as a 16-bit greyscale
-        image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 65535.0
+        image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max())  * (2**16 -1)
         # # Convert to uint
         image_2d_scaled = np.uint16(image_2d_scaled)
+        bit_depth = 16
     else:
         # Rescaling grey scale between 0-255
         image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 255.0
         # onvert to uint
         image_2d_scaled = np.uint8(image_2d_scaled)
+        bit_depth = 8 
         # Write the PNG file
-    return image_2d_scaled,shape,isRGB
+    return image_2d_scaled,shape,isRGB,bit_depth
 
 # Function to extract pixel array information
 # takes an integer used to index into the global filedata dataframe
@@ -230,7 +232,7 @@ def process_image(ds,is16Bit,apply_voi=False,apply_lut=False):
 # filemapping: dicom to png paths   (as str)
 # fail_path: dicom to failed folder (as tuple)
 # found_err: error code produced when processing
-def extract_images(ds, png_destination, failed,ApplyVOILut=False):
+def extract_images(ds, png_destination, failed,ApplyVOILUT=False):
     """
     Function that  extracts a dicom pixel arrayinto a png image. Patient metadata is used to create the file name
     Supports extracting either RGB or Monochrome images. No LUT or VOI is applied at the moment
@@ -263,13 +265,14 @@ def extract_images(ds, png_destination, failed,ApplyVOILut=False):
         store_dir = os.path.join(png_destination, folderName)
         os.makedirs(store_dir, exist_ok=True)
         pngfile = os.path.join(store_dir, img_name)
-        image_2d_scaled,shape ,isRGB = process_image(ds,is16Bit=True,apply_lut=apply_lut,apply_voi=apply_voi)
+        image_2d_scaled,shape ,isRGB,bit_depth = process_image(ds,is16Bit=True,ApplyVOILUT=ApplyVOILUT)
         with open(pngfile, "wb") as png_file:
             if isRGB:
                 image_2d_scaled = rgb_store_format(image_2d_scaled)
-                w = png.Writer(shape[1], shape[0], greyscale=False)
-            else:
-                w = png.Writer(shape[1], shape[0], greyscale=True)
+                greyscale = False
+            else: 
+                greyscale =True
+            w = png.Writer(shape[1], shape[0], greyscale=greyscale,bitdepth=bit_depth)
             w.write(png_file, image_2d_scaled)
     except AttributeError as error:
         found_err = error
@@ -413,6 +416,7 @@ def execute(
     t_start = time.time()
     counter = 0
     with Pool(core_count) as p:
+        #for i, dcm_meta in enumerate([extractor(e) for e in filelist] ) :
         for i, dcm_meta in enumerate(p.imap_unordered(extractor, filelist)):
             meta_rows.append(dcm_meta)
             if len(meta_rows) >= SaveBatchSize:
