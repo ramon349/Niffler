@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pydicom as pyd
 import png
-
+from pydicom.pixel_data_handlers import apply_voi_lut
 # pydicom imports needed to handle data errors
 from pydicom import config
 from pydicom import values
@@ -201,6 +201,28 @@ def rgb_store_format(arr):
             flat_out[-1].extend(k)
     return flat_out
 
+def process_image(ds,is16Bit,apply_voi=False,apply_lut=False):
+    try:
+        isRGB = ds.PhotometricInterpretation.value == "RGB"
+    except:
+        isRGB = False
+    image_2d = ds.pixel_array 
+    if apply_voi or apply_lut: 
+        image_2d = apply_voi(image_2d,ds,prefer_lut=True)
+    image_2d = image_2d.astype(float)
+    shape = ds.pixel_array.shape
+    if is16Bit:
+        # write the PNG file as a 16-bit greyscale
+        image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 65535.0
+        # # Convert to uint
+        image_2d_scaled = np.uint16(image_2d_scaled)
+    else:
+        # Rescaling grey scale between 0-255
+        image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 255.0
+        # onvert to uint
+        image_2d_scaled = np.uint8(image_2d_scaled)
+        # Write the PNG file
+    return image_2d_scaled,shape,isRGB
 
 # Function to extract pixel array information
 # takes an integer used to index into the global filedata dataframe
@@ -218,7 +240,6 @@ def extract_images(ds, png_destination, failed,ApplyVOILut=False):
     """
     err_code = None
     found_err = None
-    is16Bit = True
     try:
         ID1 = str(ds.PatientID)
         try:
@@ -242,41 +263,14 @@ def extract_images(ds, png_destination, failed,ApplyVOILut=False):
         store_dir = os.path.join(png_destination, folderName)
         os.makedirs(store_dir, exist_ok=True)
         pngfile = os.path.join(store_dir, img_name)
-        try:
-            isRGB = ds.PhotometricInterpretation.value == "RGB"
-        except:
-            isRGB = False
-        if is16Bit:
-            # write the PNG file as a 16-bit greyscale
-            image_2d = ds.pixel_array.astype(np.double)
-            # # Rescaling grey scale between 0-255
-            image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 65535.0
-            # # Convert to uint
-            shape = ds.pixel_array.shape
-            image_2d_scaled = np.uint16(image_2d_scaled)
-            with open(pngfile, "wb") as png_file:
-                if isRGB:
-                    image_2d_scaled = rgb_store_format(image_2d_scaled)
-                    w = png.Writer(shape[1], shape[0], greyscale=False, bitdepth=16)
-                else:
-                    w = png.Writer(shape[1], shape[0], greyscale=True, bitdepth=16)
-                w.write(png_file, image_2d_scaled)
-        else:
-            shape = ds.pixel_array.shape
-            # Convert to float to avoid overflow or underflow losses.
-            image_2d = ds.pixel_array.astype(float)
-            # Rescaling grey scale between 0-255
-            image_2d_scaled = (np.maximum(image_2d, 0) / image_2d.max()) * 255.0
-            # onvert to uint
-            image_2d_scaled = np.uint8(image_2d_scaled)
-            # Write the PNG file
-            with open(pngfile, "wb") as png_file:
-                if isRGB:
-                    image_2d_scaled = rgb_store_format(image_2d_scaled)
-                    w = png.Writer(shape[1], shape[0], greyscale=False)
-                else:
-                    w = png.Writer(shape[1], shape[0], greyscale=True)
-                w.write(png_file, image_2d_scaled)
+        image_2d_scaled,shape ,isRGB = process_image(ds,is16Bit=True,apply_lut=apply_lut,apply_voi=apply_voi)
+        with open(pngfile, "wb") as png_file:
+            if isRGB:
+                image_2d_scaled = rgb_store_format(image_2d_scaled)
+                w = png.Writer(shape[1], shape[0], greyscale=False)
+            else:
+                w = png.Writer(shape[1], shape[0], greyscale=True)
+            w.write(png_file, image_2d_scaled)
     except AttributeError as error:
         found_err = error
         logging.error(found_err)
