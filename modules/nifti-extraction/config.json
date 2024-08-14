@@ -1,13 +1,9 @@
 {
-	"DICOMHome": "/path/to/files",
-	"OutputDirectory": "/path/to/svae",
-	"Depth": 3,
-	"SplitIntoChunks": 3,
-	"PrintImages": true,
-	"CommonHeadersOnly": true,
-	"UseProcesses": 12 ,
-	"FlattenedToLevel": "patient",
-	"is16Bit":true,
-	"SendEmail": true,
-	"YourEmail": "test@test.edu"
+	"DICOMHome": "",
+	"OutputDirectory": "",
+	"SaveBatchSize":1000,
+	"SaveNifti": true,
+	"PublicHeadersOnly":true,
+	"SpecificHeadersOnly":false,
+	"NumProcesses":15
 }
